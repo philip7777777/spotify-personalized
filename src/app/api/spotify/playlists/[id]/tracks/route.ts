@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { auth } from "@/auth";
 import { getValidSpotifyAccessToken } from "@/lib/spotify-token";
 import { SPOTIFY_API_BASE } from "@/lib/spotify";
+import { spotifyFetch } from "@/lib/spotify-fetch";
 
 type SpotifyPlaylistTrackItem = {
   track: {
@@ -44,13 +45,22 @@ export async function GET(
   const allItems: SpotifyPlaylistTrackItem[] = [];
 
   while (url) {
-    const res: Response = await fetch(url, {
+    const res: Response = await spotifyFetch(url, {
       headers: { Authorization: `Bearer ${accessToken}` },
     });
 
     if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      console.error(
+        `Spotify /playlists/${id}/tracks failed: ${res.status} ${body}`,
+      );
       return NextResponse.json(
-        { error: "Failed to fetch playlist tracks from Spotify" },
+        {
+          error:
+            res.status === 429
+              ? "Spotify rate limit hit — please wait a bit and try again."
+              : "Failed to fetch playlist tracks from Spotify",
+        },
         { status: res.status },
       );
     }

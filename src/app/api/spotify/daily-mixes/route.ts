@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { auth } from "@/auth";
 import { getValidSpotifyAccessToken } from "@/lib/spotify-token";
 import { SPOTIFY_API_BASE } from "@/lib/spotify";
+import { spotifyFetch } from "@/lib/spotify-fetch";
 
 type SpotifyPlaylist = {
   id: string;
@@ -34,13 +35,35 @@ export async function GET() {
   const allPlaylists: SpotifyPlaylist[] = [];
 
   while (url) {
-    const res: Response = await fetch(url, {
+    const res: Response = await spotifyFetch(url, {
       headers: { Authorization: `Bearer ${accessToken}` },
     });
 
     if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      console.error(`Spotify /me/playlists failed: ${res.status} ${body}`);
+
+      if (res.status === 429) {
+        const retryAfter = res.headers.get("Retry-After");
+        return NextResponse.json(
+          {
+            error: retryAfter
+              ? `Spotify rate limit hit — try again in ${retryAfter}s.`
+              : "Spotify rate limit hit — please wait a bit and try again.",
+          },
+          { status: 429 },
+        );
+      }
+
       return NextResponse.json(
-        { error: "Failed to fetch playlists from Spotify" },
+        {
+          error:
+            res.status === 403
+              ? "Missing permission to read playlists — disconnect and reconnect Spotify in Settings to grant the playlist-read-private scope."
+              : res.status === 401
+                ? "Spotify session expired — disconnect and reconnect Spotify in Settings."
+                : `Failed to fetch playlists from Spotify (${res.status})`,
+        },
         { status: res.status },
       );
     }
