@@ -11,6 +11,13 @@ type Track = {
   durationMs: number;
 };
 
+type DailyMix = {
+  id: string;
+  name: string;
+  owner: string;
+  trackCount: number;
+};
+
 // Minimal shape of the bits of the Spotify Web Playback SDK we use.
 type SpotifyPlayerState = {
   paused: boolean;
@@ -57,6 +64,14 @@ export function LibraryClient() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  const [view, setView] = useState<"library" | "dailyMixes">("library");
+  const [dailyMixes, setDailyMixes] = useState<DailyMix[]>([]);
+  const [mixesLoading, setMixesLoading] = useState(false);
+  const [mixesError, setMixesError] = useState<string | null>(null);
+  const [selectedMix, setSelectedMix] = useState<DailyMix | null>(null);
+  const [mixTracks, setMixTracks] = useState<Track[]>([]);
+  const [mixTracksLoading, setMixTracksLoading] = useState(false);
+
   const [sdkReady, setSdkReady] = useState(false);
   const [deviceId, setDeviceId] = useState<string | null>(null);
   const [currentUri, setCurrentUri] = useState<string | null>(null);
@@ -79,6 +94,21 @@ export function LibraryClient() {
       .catch((err) => setError(err.message))
       .finally(() => setLoading(false));
   }, []);
+
+  // Load Daily Mix playlists once the user switches to that tab.
+  useEffect(() => {
+    if (view !== "dailyMixes" || dailyMixes.length > 0 || mixesLoading) return;
+    setMixesLoading(true);
+    fetch("/api/spotify/daily-mixes")
+      .then(async (res) => {
+        if (!res.ok)
+          throw new Error((await res.json()).error ?? "Failed to load");
+        return res.json();
+      })
+      .then((data) => setDailyMixes(data.dailyMixes))
+      .catch((err) => setMixesError(err.message))
+      .finally(() => setMixesLoading(false));
+  }, [view, dailyMixes.length, mixesLoading]);
 
   // Load the Web Playback SDK script and initialize the player.
   useEffect(() => {
@@ -143,10 +173,28 @@ export function LibraryClient() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         deviceId,
-        uris: tracks.map((t) => t.uri),
+        uris: displayedTracks.map((t) => t.uri),
         offset: index,
       }),
     });
+  }
+
+  async function handleSelectMix(mix: DailyMix) {
+    setSelectedMix(mix);
+    setMixTracks([]);
+    setMixTracksLoading(true);
+    setMixesError(null);
+
+    try {
+      const res = await fetch(`/api/spotify/playlists/${mix.id}/tracks`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Failed to load mix");
+      setMixTracks(data.tracks);
+    } catch (err) {
+      setMixesError(err instanceof Error ? err.message : "Failed to load mix");
+    } finally {
+      setMixTracksLoading(false);
+    }
   }
 
   async function handleSeek(e: React.ChangeEvent<HTMLInputElement>) {
@@ -158,7 +206,12 @@ export function LibraryClient() {
     setSeeking(false);
   }
 
-  const currentTrack = tracks.find((t) => t.uri === currentUri) ?? null;
+  const displayedTracks =
+    view === "dailyMixes" && selectedMix ? mixTracks : tracks;
+  const currentTrack =
+    tracks.find((t) => t.uri === currentUri) ??
+    mixTracks.find((t) => t.uri === currentUri) ??
+    null;
 
   return (
     <main className="flex flex-1 flex-col items-center p-8">
@@ -169,52 +222,173 @@ export function LibraryClient() {
           <p className="text-sm text-gray-500">Connecting to Spotify player…</p>
         )}
 
-        {loading && <p className="text-sm text-gray-500">Loading tracks…</p>}
-        {error && <p className="text-sm text-red-600">{error}</p>}
+        <div className="flex gap-2 border-b">
+          <button
+            onClick={() => setView("library")}
+            className={`px-3 py-2 text-sm font-medium ${
+              view === "library"
+                ? "border-b-2 border-black"
+                : "text-gray-500"
+            }`}
+          >
+            Liked Songs
+          </button>
+          <button
+            onClick={() => setView("dailyMixes")}
+            className={`px-3 py-2 text-sm font-medium ${
+              view === "dailyMixes"
+                ? "border-b-2 border-black"
+                : "text-gray-500"
+            }`}
+          >
+            Daily Mixes
+          </button>
+        </div>
 
-        <ul className="divide-y rounded-lg border pb-20">
-          {tracks.map((track, index) => {
-            const isCurrent = currentUri === track.uri;
-            return (
-              <li
-                key={track.id}
-                className="flex items-center justify-between gap-4 px-4 py-3"
-              >
-                <div className="min-w-0">
-                  <p
-                    className={`truncate text-sm font-medium ${
-                      isCurrent ? "text-green-600" : ""
-                    }`}
+        {view === "library" && (
+          <>
+            {loading && (
+              <p className="text-sm text-gray-500">Loading tracks…</p>
+            )}
+            {error && <p className="text-sm text-red-600">{error}</p>}
+
+            <ul className="divide-y rounded-lg border pb-20">
+              {tracks.map((track, index) => {
+                const isCurrent = currentUri === track.uri;
+                return (
+                  <li
+                    key={track.id}
+                    className="flex items-center justify-between gap-4 px-4 py-3"
                   >
-                    {track.name}
-                  </p>
-                  <p className="truncate text-xs text-gray-500">
-                    {track.artist}
-                  </p>
-                </div>
-                <div className="flex shrink-0 items-center gap-3">
-                  <span className="text-xs text-gray-400">
-                    {formatDuration(track.durationMs)}
-                  </span>
+                    <div className="min-w-0">
+                      <p
+                        className={`truncate text-sm font-medium ${
+                          isCurrent ? "text-green-600" : ""
+                        }`}
+                      >
+                        {track.name}
+                      </p>
+                      <p className="truncate text-xs text-gray-500">
+                        {track.artist}
+                      </p>
+                    </div>
+                    <div className="flex shrink-0 items-center gap-3">
+                      <span className="text-xs text-gray-400">
+                        {formatDuration(track.durationMs)}
+                      </span>
+                      <button
+                        onClick={() =>
+                          isCurrent
+                            ? playerRef.current?.togglePlay()
+                            : playTrack(index)
+                        }
+                        disabled={!sdkReady}
+                        className="rounded-md border px-3 py-1 text-xs font-medium disabled:opacity-50"
+                      >
+                        {isCurrent && !isPaused ? "Pause" : "Play"}
+                      </button>
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+
+            {!loading && tracks.length === 0 && !error && (
+              <p className="text-sm text-gray-500">No saved tracks found.</p>
+            )}
+          </>
+        )}
+
+        {view === "dailyMixes" && !selectedMix && (
+          <>
+            {mixesLoading && (
+              <p className="text-sm text-gray-500">Loading Daily Mixes…</p>
+            )}
+            {mixesError && (
+              <p className="text-sm text-red-600">{mixesError}</p>
+            )}
+
+            <ul className="divide-y rounded-lg border pb-20">
+              {dailyMixes.map((mix) => (
+                <li key={mix.id}>
                   <button
-                    onClick={() =>
-                      isCurrent
-                        ? playerRef.current?.togglePlay()
-                        : playTrack(index)
-                    }
-                    disabled={!sdkReady}
-                    className="rounded-md border px-3 py-1 text-xs font-medium disabled:opacity-50"
+                    onClick={() => handleSelectMix(mix)}
+                    className="flex w-full items-center justify-between gap-4 px-4 py-3 text-left hover:bg-gray-50"
                   >
-                    {isCurrent && !isPaused ? "Pause" : "Play"}
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-medium">
+                        {mix.name}
+                      </p>
+                      <p className="truncate text-xs text-gray-500">
+                        {mix.trackCount} songs
+                      </p>
+                    </div>
                   </button>
-                </div>
-              </li>
-            );
-          })}
-        </ul>
+                </li>
+              ))}
+            </ul>
 
-        {!loading && tracks.length === 0 && !error && (
-          <p className="text-sm text-gray-500">No saved tracks found.</p>
+            {!mixesLoading && dailyMixes.length === 0 && !mixesError && (
+              <p className="text-sm text-gray-500">No Daily Mixes found.</p>
+            )}
+          </>
+        )}
+
+        {view === "dailyMixes" && selectedMix && (
+          <>
+            <button
+              onClick={() => setSelectedMix(null)}
+              className="text-sm font-medium text-gray-500 hover:text-black"
+            >
+              ← Back to Daily Mixes
+            </button>
+            <h2 className="text-lg font-medium">{selectedMix.name}</h2>
+
+            {mixTracksLoading && (
+              <p className="text-sm text-gray-500">Loading tracks…</p>
+            )}
+
+            <ul className="divide-y rounded-lg border pb-20">
+              {mixTracks.map((track, index) => {
+                const isCurrent = currentUri === track.uri;
+                return (
+                  <li
+                    key={track.id}
+                    className="flex items-center justify-between gap-4 px-4 py-3"
+                  >
+                    <div className="min-w-0">
+                      <p
+                        className={`truncate text-sm font-medium ${
+                          isCurrent ? "text-green-600" : ""
+                        }`}
+                      >
+                        {track.name}
+                      </p>
+                      <p className="truncate text-xs text-gray-500">
+                        {track.artist}
+                      </p>
+                    </div>
+                    <div className="flex shrink-0 items-center gap-3">
+                      <span className="text-xs text-gray-400">
+                        {formatDuration(track.durationMs)}
+                      </span>
+                      <button
+                        onClick={() =>
+                          isCurrent
+                            ? playerRef.current?.togglePlay()
+                            : playTrack(index)
+                        }
+                        disabled={!sdkReady}
+                        className="rounded-md border px-3 py-1 text-xs font-medium disabled:opacity-50"
+                      >
+                        {isCurrent && !isPaused ? "Pause" : "Play"}
+                      </button>
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+          </>
         )}
       </div>
 
