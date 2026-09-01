@@ -1,36 +1,165 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Spotify Personalized — Auth Scaffolding
 
-## Getting Started
+A Next.js (App Router, TypeScript, Tailwind CSS) starter with:
 
-First, run the development server:
+- Single-user username/password authentication (NextAuth / Auth.js v5,
+  Credentials provider) — **no public signup**, one account only
+- A settings page with:
+  - **Change password**
+  - **Two-factor authentication (2FA) via SMS** (enroll phone number, verify with a texted code, disable)
+  - **Connect Spotify** (OAuth Authorization Code flow)
+- A `/library` page: lists your saved Spotify tracks (podcasts/episodes
+  filtered out, no cover art shown) with playback via the Spotify Web
+  Playback SDK (requires Spotify Premium)
+- Prisma ORM with SQLite for local development
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+## Requirements
+
+- Node.js 20+
+- npm
+
+## Setup
+
+1. Install dependencies (already done if you're reading this after scaffolding):
+
+   ```bash
+   npm install
+   ```
+
+2. Copy/check environment variables in `.env`:
+
+   ```bash
+   DATABASE_URL="file:./dev.db"
+   AUTH_SECRET="<random base64 string>"   # generate with: npx auth secret
+   TWILIO_ACCOUNT_SID=""
+   TWILIO_AUTH_TOKEN=""
+   TWILIO_FROM_NUMBER=""
+   SPOTIFY_CLIENT_ID=""
+   SPOTIFY_CLIENT_SECRET=""
+   SPOTIFY_REDIRECT_URI="http://127.0.0.1:3000/api/spotify/callback"
+   ```
+
+   - `AUTH_SECRET` is required by NextAuth to sign session tokens.
+   - `TWILIO_*` variables are **optional** for local development. If left
+     blank, verification codes are printed to the server console instead of
+     being texted, so you can test the full 2FA flow without a Twilio
+     account. To send real texts, create a Twilio account, buy/verify a
+     phone number, and fill in the three `TWILIO_*` values.
+   - `SPOTIFY_*` variables come from a Spotify app registered at the
+     [Spotify Developer Dashboard](https://developer.spotify.com/dashboard).
+     Register the redirect URI exactly as `http://127.0.0.1:3000/api/spotify/callback`
+     (Spotify requires the literal loopback IP, not `localhost`, for
+     non-HTTPS redirect URIs). Enable **Web API** and **Web Playback SDK**
+     for the app.
+
+3. Apply the database schema:
+
+   ```bash
+   npx prisma migrate dev
+   ```
+
+4. Seed the single user account (username `philip.chakram`, random password):
+
+   ```bash
+   npm run seed
+   ```
+
+   This prints a generated password to the terminal — **copy it somewhere
+   safe**, it won't be shown again. Re-running the seed script resets the
+   password to a new random one. Once logged in, you can change the
+   password anytime from `/settings`.
+
+5. Run the dev server:
+
+   ```bash
+   npm run dev
+   ```
+
+6. Open [http://127.0.0.1:3000](http://127.0.0.1:3000) (use `127.0.0.1`,
+   not `localhost`, so cookies/redirects stay consistent with the Spotify
+   redirect URI) and log in with `philip.chakram` and the password from
+   step 4.
+7. Go to **Settings** → **Connect Spotify** to link your account, then
+   visit **Library** to see your saved tracks and play them.
+
+## How it works
+
+- **Login** (`/login`): posts credentials to `/api/auth/login-check`, which
+  validates the password and, if 2FA is enabled, texts a 6-digit code and
+  asks the login page to prompt for it. The final sign-in is completed via
+  NextAuth's `signIn("credentials", …)`, which re-validates the password
+  and code server-side.
+- **Settings** (`/settings`, requires login):
+  - Change password: verifies the current password before updating.
+  - Enable 2FA: enter a phone number → a code is texted → enter the code to
+    confirm and turn 2FA on.
+  - Disable 2FA: one click, no re-verification (add re-auth if you want
+    stricter security).
+  - Connect Spotify: redirects to Spotify's Authorization Code OAuth flow;
+    on success, access/refresh tokens are stored in the `SpotifyAccount`
+    table tied to your user.
+- **Library** (`/library`, requires login + connected Spotify account):
+  - Fetches your saved tracks via `GET /me/tracks`, filtering out anything
+    that isn't `type === "track"` (podcast episodes never appear in saved
+    tracks, but this filter is a safety net) and omitting album art.
+  - Initializes the Spotify Web Playback SDK client-side, which creates a
+    "device" you can direct playback to — click **Play** on a track to
+    start it. Requires **Spotify Premium**.
+  - Access tokens are refreshed automatically server-side when expired
+    (`src/lib/spotify-token.ts`).
+
+## Project structure
+
+```
+src/
+  auth.ts                       NextAuth config (Credentials provider)
+  lib/
+    prisma.ts                   Prisma client singleton
+    sms.ts                      Twilio SMS helper (falls back to console.log)
+    spotify.ts                  Spotify OAuth + Web API helpers (auth URL, token exchange/refresh)
+    spotify-token.ts            Gets a valid (auto-refreshed) access token for a user
+  app/
+    page.tsx                    Home page (shows login or settings/library links)
+    login/page.tsx
+    settings/
+      page.tsx                  Server component, loads current user + guards route
+      settings-form.tsx         Client component: password + 2FA forms
+      spotify-section.tsx       Client component: Connect Spotify button/status
+    library/
+      page.tsx                  Server component, guards route (requires connected Spotify account)
+      library-client.tsx        Client component: track list + Web Playback SDK player
+    actions.ts                  Server action for sign-out
+    api/
+      auth/
+        [...nextauth]/route.ts  NextAuth handlers
+        login-check/route.ts    Pre-flight check + SMS code send
+      settings/
+        change-password/route.ts
+        2fa/enroll/route.ts
+        2fa/verify/route.ts
+        2fa/disable/route.ts
+      spotify/
+        login/route.ts          Redirects to Spotify's /authorize
+        callback/route.ts       Exchanges code for tokens, stores them
+        token/route.ts          Hands a fresh access token to the client SDK
+        tracks/route.ts         Fetches + filters saved tracks
+        play/route.ts           Starts playback on a Web Playback SDK device
+prisma/
+  schema.prisma                 User + SpotifyAccount models
+  seed.ts                       Creates/resets the single "philip.chakram" account
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## Notes & next steps
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
-
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
-
-## Learn More
-
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+- This uses SQLite for simplicity. Swap the Prisma `datasource` provider to
+  Postgres/MySQL for production and update `DATABASE_URL` accordingly.
+- Verification codes expire after 5 minutes and are single-use.
+- Consider rate-limiting `login-check` and the 2FA endpoints before
+  deploying publicly.
+- Consider requiring re-authentication before disabling 2FA.
+- The Spotify redirect URI must exactly match what's registered in the
+  Spotify Developer Dashboard (`http://127.0.0.1:3000/api/spotify/callback`
+  for local dev). If you deploy this somewhere with HTTPS, update
+  `SPOTIFY_REDIRECT_URI` and register the new HTTPS URI in the dashboard.
+- The Web Playback SDK requires **Spotify Premium** — playback requests
+  will fail on Free accounts.
