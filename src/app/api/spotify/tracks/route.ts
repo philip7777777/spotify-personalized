@@ -29,30 +29,39 @@ export async function GET(request: Request) {
     );
   }
 
-  const { searchParams } = new URL(request.url);
-  const limit = Math.min(Number(searchParams.get("limit") ?? 50), 50);
-  const offset = Number(searchParams.get("offset") ?? 0);
+  // Spotify caps a single request at 50 items, so page through everything
+  // to return the user's full liked-songs library in one response.
+  const PAGE_SIZE = 50;
+  let url: string | null =
+    `${SPOTIFY_API_BASE}/me/tracks?limit=${PAGE_SIZE}&offset=0`;
+  const allItems: SpotifySavedTrackItem[] = [];
+  let total = 0;
 
-  const res = await fetch(
-    `${SPOTIFY_API_BASE}/me/tracks?limit=${limit}&offset=${offset}`,
-    { headers: { Authorization: `Bearer ${accessToken}` } },
-  );
+  while (url) {
+    const res: Response = await fetch(url, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
 
-  if (!res.ok) {
-    return NextResponse.json(
-      { error: "Failed to fetch tracks from Spotify" },
-      { status: res.status },
-    );
+    if (!res.ok) {
+      return NextResponse.json(
+        { error: "Failed to fetch tracks from Spotify" },
+        { status: res.status },
+      );
+    }
+
+    const data: {
+      items: SpotifySavedTrackItem[];
+      total: number;
+      next: string | null;
+    } = await res.json();
+
+    allItems.push(...data.items);
+    total = data.total;
+    url = data.next;
   }
 
-  const data: {
-    items: SpotifySavedTrackItem[];
-    total: number;
-    next: string | null;
-  } = await res.json();
-
   // Only actual songs, never podcast episodes. No album art / images included.
-  const tracks = data.items
+  const tracks = allItems
     .filter((item) => item.track && item.track.type === "track")
     .map((item) => ({
       id: item.track!.id,
@@ -65,7 +74,7 @@ export async function GET(request: Request) {
 
   return NextResponse.json({
     tracks,
-    total: data.total,
-    hasMore: Boolean(data.next),
+    total,
+    hasMore: false,
   });
 }

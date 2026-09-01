@@ -7,12 +7,15 @@ import { SPOTIFY_API_BASE } from "@/lib/spotify";
 const schema = z.object({
   deviceId: z.string().min(1),
   uris: z.array(z.string()).min(1),
+  offset: z.number().int().min(0).optional(),
 });
 
 /**
  * Starts playback of the given track URI(s) on the given Web Playback SDK
  * device (identified by deviceId, obtained client-side from the SDK's
- * "ready" event).
+ * "ready" event). An optional offset selects the starting index within
+ * the uris list, which also becomes the SDK's playback queue so that
+ * next/previous track controls work across the whole list.
  */
 export async function POST(request: Request) {
   const session = await auth();
@@ -34,7 +37,7 @@ export async function POST(request: Request) {
     );
   }
 
-  const { deviceId, uris } = parsed.data;
+  const { deviceId, uris, offset } = parsed.data;
 
   const res = await fetch(
     `${SPOTIFY_API_BASE}/me/player/play?device_id=${deviceId}`,
@@ -44,7 +47,10 @@ export async function POST(request: Request) {
         Authorization: `Bearer ${accessToken}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ uris }),
+      body: JSON.stringify({
+        uris,
+        ...(offset !== undefined ? { offset: { position: offset } } : {}),
+      }),
     },
   );
 
