@@ -2,7 +2,13 @@ import { NextResponse } from "next/server";
 import { auth } from "@/auth";
 import { getValidSpotifyAccessToken } from "@/lib/spotify-token";
 import { SPOTIFY_API_BASE } from "@/lib/spotify";
-import { spotifyFetch } from "@/lib/spotify-fetch";
+import {
+  spotifyFetch,
+  SpotifyRateLimitError,
+  formatRetryAfter,
+  getCached,
+  setCached,
+} from "@/lib/spotify-fetch";
 
 type SpotifyPlaylist = {
   id: string;
@@ -10,6 +16,17 @@ type SpotifyPlaylist = {
   owner: { id: string; display_name: string | null };
   tracks: { total: number };
 };
+
+type DailyMixesResponse = {
+  dailyMixes: {
+    id: string;
+    name: string;
+    owner: string;
+    trackCount: number;
+  }[];
+};
+
+const CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes
 
 /**
  * Returns the user's "Daily Mix" playlists (Daily Mix 1, Daily Mix 2, ...).
@@ -30,48 +47,54 @@ export async function GET() {
     );
   }
 
+  const cacheKey = `${session.user.id}:daily-mixes`;
+  const cached = getCached<DailyMixesResponse>(cacheKey);
+  if (cached) {
+    return NextResponse.json(cached);
+  }
+
   const PAGE_SIZE = 50;
   let url: string | null = `${SPOTIFY_API_BASE}/me/playlists?limit=${PAGE_SIZE}`;
   const allPlaylists: SpotifyPlaylist[] = [];
 
-  while (url) {
-    const res: Response = await spotifyFetch(url, {
-      headers: { Authorization: `Bearer ${accessToken}` },
-    });
+  try {
+    while (url) {
+      const res: Response = await spotifyFetch(url, {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
 
-    if (!res.ok) {
-      const body = await res.text().catch(() => "");
-      console.error(`Spotify /me/playlists failed: ${res.status} ${body}`);
+      if (!res.ok) {
+        const body = await res.text().catch(() => "");
+        console.error(`Spotify /me/playlists failed: ${res.status} ${body}`);
 
-      if (res.status === 429) {
-        const retryAfter = res.headers.get("Retry-After");
         return NextResponse.json(
           {
-            error: retryAfter
-              ? `Spotify rate limit hit — try again in ${retryAfter}s.`
-              : "Spotify rate limit hit — please wait a bit and try again.",
+            error:
+              res.status === 403
+                ? "Missing permission to read playlists — disconnect and reconnect Spotify in Settings to grant the playlist-read-private scope."
+                : res.status === 401
+                  ? "Spotify session expired — disconnect and reconnect Spotify in Settings."
+                  : `Failed to fetch playlists from Spotify (${res.status})`,
           },
-          { status: 429 },
+          { status: res.status },
         );
       }
 
+      const data: { items: SpotifyPlaylist[]; next: string | null } =
+        await res.json();
+      allPlaylists.push(...data.items);
+      url = data.next;
+    }
+  } catch (err) {
+    if (err instanceof SpotifyRateLimitError) {
       return NextResponse.json(
         {
-          error:
-            res.status === 403
-              ? "Missing permission to read playlists — disconnect and reconnect Spotify in Settings to grant the playlist-read-private scope."
-              : res.status === 401
-                ? "Spotify session expired — disconnect and reconnect Spotify in Settings."
-                : `Failed to fetch playlists from Spotify (${res.status})`,
+          error: `Spotify rate limit hit — try again in ${formatRetryAfter(err.retryAfterSeconds)}.`,
         },
-        { status: res.status },
+        { status: 429 },
       );
     }
-
-    const data: { items: SpotifyPlaylist[]; next: string | null } =
-      await res.json();
-    allPlaylists.push(...data.items);
-    url = data.next;
+    throw err;
   }
 
   const dailyMixes = allPlaylists
@@ -84,5 +107,8 @@ export async function GET() {
       trackCount: p.tracks.total,
     }));
 
-  return NextResponse.json({ dailyMixes });
+  const responseBody: DailyMixesResponse = { dailyMixes };
+  setCached(cacheKey, responseBody, CACHE_TTL_MS);
+
+  return NextResponse.json(responseBody);
 }

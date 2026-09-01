@@ -2,7 +2,28 @@ import { NextResponse } from "next/server";
 import { auth } from "@/auth";
 import { getValidSpotifyAccessToken } from "@/lib/spotify-token";
 import { SPOTIFY_API_BASE } from "@/lib/spotify";
-import { spotifyFetch } from "@/lib/spotify-fetch";
+import {
+  spotifyFetch,
+  SpotifyRateLimitError,
+  formatRetryAfter,
+  getCached,
+  setCached,
+} from "@/lib/spotify-fetch";
+
+type TracksResponse = {
+  tracks: {
+    id: string;
+    uri: string;
+    name: string;
+    artist: string;
+    album: string;
+    durationMs: number;
+  }[];
+  total: number;
+  hasMore: boolean;
+};
+
+const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
 type SpotifySavedTrackItem = {
   track: {
@@ -30,6 +51,12 @@ export async function GET(request: Request) {
     );
   }
 
+  const cacheKey = `${session.user.id}:tracks`;
+  const cached = getCached<TracksResponse>(cacheKey);
+  if (cached) {
+    return NextResponse.json(cached);
+  }
+
   // Spotify caps a single request at 50 items, so page through everything
   // to return the user's full liked-songs library in one response.
   const PAGE_SIZE = 50;
@@ -38,34 +65,41 @@ export async function GET(request: Request) {
   const allItems: SpotifySavedTrackItem[] = [];
   let total = 0;
 
-  while (url) {
-    const res: Response = await spotifyFetch(url, {
-      headers: { Authorization: `Bearer ${accessToken}` },
-    });
+  try {
+    while (url) {
+      const res: Response = await spotifyFetch(url, {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
 
-    if (!res.ok) {
-      const body = await res.text().catch(() => "");
-      console.error(`Spotify /me/tracks failed: ${res.status} ${body}`);
+      if (!res.ok) {
+        const body = await res.text().catch(() => "");
+        console.error(`Spotify /me/tracks failed: ${res.status} ${body}`);
+        return NextResponse.json(
+          { error: "Failed to fetch tracks from Spotify" },
+          { status: res.status },
+        );
+      }
+
+      const data: {
+        items: SpotifySavedTrackItem[];
+        total: number;
+        next: string | null;
+      } = await res.json();
+
+      allItems.push(...data.items);
+      total = data.total;
+      url = data.next;
+    }
+  } catch (err) {
+    if (err instanceof SpotifyRateLimitError) {
       return NextResponse.json(
         {
-          error:
-            res.status === 429
-              ? "Spotify rate limit hit — please wait a bit and try again."
-              : "Failed to fetch tracks from Spotify",
+          error: `Spotify rate limit hit — try again in ${formatRetryAfter(err.retryAfterSeconds)}.`,
         },
-        { status: res.status },
+        { status: 429 },
       );
     }
-
-    const data: {
-      items: SpotifySavedTrackItem[];
-      total: number;
-      next: string | null;
-    } = await res.json();
-
-    allItems.push(...data.items);
-    total = data.total;
-    url = data.next;
+    throw err;
   }
 
   // Only actual songs, never podcast episodes. No album art / images included.
@@ -80,9 +114,13 @@ export async function GET(request: Request) {
       durationMs: item.track!.duration_ms,
     }));
 
-  return NextResponse.json({
+  const responseBody: TracksResponse = {
     tracks,
     total,
     hasMore: false,
-  });
+  };
+
+  setCached(cacheKey, responseBody, CACHE_TTL_MS);
+
+  return NextResponse.json(responseBody);
 }

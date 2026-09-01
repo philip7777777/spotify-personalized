@@ -2,7 +2,13 @@ import { NextResponse } from "next/server";
 import { auth } from "@/auth";
 import { getValidSpotifyAccessToken } from "@/lib/spotify-token";
 import { SPOTIFY_API_BASE } from "@/lib/spotify";
-import { spotifyFetch } from "@/lib/spotify-fetch";
+import {
+  spotifyFetch,
+  SpotifyRateLimitError,
+  formatRetryAfter,
+  getCached,
+  setCached,
+} from "@/lib/spotify-fetch";
 
 type SpotifyPlaylistTrackItem = {
   track: {
@@ -15,6 +21,19 @@ type SpotifyPlaylistTrackItem = {
     album: { name: string };
   } | null;
 };
+
+type PlaylistTracksResponse = {
+  tracks: {
+    id: string;
+    uri: string;
+    name: string;
+    artist: string;
+    album: string;
+    durationMs: number;
+  }[];
+};
+
+const CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes
 
 /**
  * Returns all tracks in the given playlist (e.g. a Daily Mix), paginating
@@ -39,39 +58,52 @@ export async function GET(
     );
   }
 
+  const cacheKey = `${session.user.id}:playlist:${id}`;
+  const cached = getCached<PlaylistTracksResponse>(cacheKey);
+  if (cached) {
+    return NextResponse.json(cached);
+  }
+
   const PAGE_SIZE = 100;
   let url: string | null =
     `${SPOTIFY_API_BASE}/playlists/${id}/tracks?limit=${PAGE_SIZE}`;
   const allItems: SpotifyPlaylistTrackItem[] = [];
 
-  while (url) {
-    const res: Response = await spotifyFetch(url, {
-      headers: { Authorization: `Bearer ${accessToken}` },
-    });
+  try {
+    while (url) {
+      const res: Response = await spotifyFetch(url, {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
 
-    if (!res.ok) {
-      const body = await res.text().catch(() => "");
-      console.error(
-        `Spotify /playlists/${id}/tracks failed: ${res.status} ${body}`,
-      );
+      if (!res.ok) {
+        const body = await res.text().catch(() => "");
+        console.error(
+          `Spotify /playlists/${id}/tracks failed: ${res.status} ${body}`,
+        );
+        return NextResponse.json(
+          { error: "Failed to fetch playlist tracks from Spotify" },
+          { status: res.status },
+        );
+      }
+
+      const data: {
+        items: SpotifyPlaylistTrackItem[];
+        next: string | null;
+      } = await res.json();
+
+      allItems.push(...data.items);
+      url = data.next;
+    }
+  } catch (err) {
+    if (err instanceof SpotifyRateLimitError) {
       return NextResponse.json(
         {
-          error:
-            res.status === 429
-              ? "Spotify rate limit hit — please wait a bit and try again."
-              : "Failed to fetch playlist tracks from Spotify",
+          error: `Spotify rate limit hit — try again in ${formatRetryAfter(err.retryAfterSeconds)}.`,
         },
-        { status: res.status },
+        { status: 429 },
       );
     }
-
-    const data: {
-      items: SpotifyPlaylistTrackItem[];
-      next: string | null;
-    } = await res.json();
-
-    allItems.push(...data.items);
-    url = data.next;
+    throw err;
   }
 
   const tracks = allItems
@@ -85,5 +117,8 @@ export async function GET(
       durationMs: item.track!.duration_ms,
     }));
 
-  return NextResponse.json({ tracks });
+  const responseBody: PlaylistTracksResponse = { tracks };
+  setCached(cacheKey, responseBody, CACHE_TTL_MS);
+
+  return NextResponse.json(responseBody);
 }
