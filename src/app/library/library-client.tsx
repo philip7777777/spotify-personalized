@@ -68,6 +68,7 @@ export function LibraryClient() {
   const [dailyMixes, setDailyMixes] = useState<DailyMix[]>([]);
   const [mixesLoading, setMixesLoading] = useState(false);
   const [mixesError, setMixesError] = useState<string | null>(null);
+  const [mixesFetched, setMixesFetched] = useState(false);
   const [selectedMix, setSelectedMix] = useState<DailyMix | null>(null);
   const [mixTracks, setMixTracks] = useState<Track[]>([]);
   const [mixTracksLoading, setMixTracksLoading] = useState(false);
@@ -95,10 +96,13 @@ export function LibraryClient() {
       .finally(() => setLoading(false));
   }, []);
 
-  // Load Daily Mix playlists once the user switches to that tab.
+  // Load Daily Mix playlists once the user switches to that tab (only once
+  // per page load — mixesFetched guards against refetch loops even when
+  // zero mixes are found).
   useEffect(() => {
-    if (view !== "dailyMixes" || dailyMixes.length > 0 || mixesLoading) return;
+    if (view !== "dailyMixes" || mixesFetched || mixesLoading) return;
     setMixesLoading(true);
+    setMixesError(null);
     fetch("/api/spotify/daily-mixes")
       .then(async (res) => {
         if (!res.ok)
@@ -107,8 +111,11 @@ export function LibraryClient() {
       })
       .then((data) => setDailyMixes(data.dailyMixes))
       .catch((err) => setMixesError(err.message))
-      .finally(() => setMixesLoading(false));
-  }, [view, dailyMixes.length, mixesLoading]);
+      .finally(() => {
+        setMixesLoading(false);
+        setMixesFetched(true);
+      });
+  }, [view, mixesFetched, mixesLoading]);
 
   // Load the Web Playback SDK script and initialize the player.
   useEffect(() => {
@@ -329,7 +336,11 @@ export function LibraryClient() {
             </ul>
 
             {!mixesLoading && dailyMixes.length === 0 && !mixesError && (
-              <p className="text-sm text-gray-500">No Daily Mixes found.</p>
+              <p className="text-sm text-gray-500">
+                No Daily Mixes found. Spotify generates these automatically
+                over time — make sure you have some listening history, or
+                try refreshing.
+              </p>
             )}
           </>
         )}
