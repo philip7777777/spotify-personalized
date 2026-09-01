@@ -8,12 +8,17 @@
  * password manager). Re-running this script will reset the password to a
  * newly generated one.
  */
+import "dotenv/config";
 import { randomBytes } from "node:crypto";
 import bcrypt from "bcryptjs";
 import { PrismaClient } from "../src/generated/prisma/client";
-import { PrismaPg } from "@prisma/adapter-pg";
+import { PrismaNeon } from "@prisma/adapter-neon";
+import { neonConfig } from "@neondatabase/serverless";
+import ws from "ws";
 
-const adapter = new PrismaPg({
+neonConfig.webSocketConstructor = ws;
+
+const adapter = new PrismaNeon({
   connectionString: process.env.DATABASE_URL,
 });
 const prisma = new PrismaClient({ adapter });

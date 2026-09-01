@@ -11,8 +11,9 @@ A Next.js (App Router, TypeScript, Tailwind CSS) starter with:
 - A `/library` page: lists your saved Spotify tracks (podcasts/episodes
   filtered out, no cover art shown) with playback via the Spotify Web
   Playback SDK (requires Spotify Premium)
-- Prisma ORM with Postgres (works with Neon, Vercel Postgres, Supabase, or
-  any standard Postgres connection string)
+- Prisma ORM with Postgres, using Neon's serverless driver
+  (`@neondatabase/serverless` + `@prisma/adapter-neon`) — ideal for
+  Vercel's serverless functions
 
 ## Requirements
 
@@ -33,7 +34,8 @@ A Next.js (App Router, TypeScript, Tailwind CSS) starter with:
 2. Copy/check environment variables in `.env`:
 
    ```bash
-   DATABASE_URL="postgresql://user:password@host:5432/dbname?sslmode=require"
+   DATABASE_URL="postgresql://user:password@host-pooler.region.aws.neon.tech/dbname?channel_binding=require&sslmode=require"
+   DIRECT_URL="postgresql://user:password@host.region.aws.neon.tech/dbname?sslmode=require"
    AUTH_SECRET="<random base64 string>"   # generate with: npx auth secret
    TWILIO_ACCOUNT_SID=""
    TWILIO_AUTH_TOKEN=""
@@ -43,10 +45,15 @@ A Next.js (App Router, TypeScript, Tailwind CSS) starter with:
    SPOTIFY_REDIRECT_URI="http://127.0.0.1:3000/api/spotify/callback"
    ```
 
-   - `DATABASE_URL` is a standard Postgres connection string. Create a free
-     database at [Neon](https://neon.tech) (recommended — fastest signup,
-     works great with Vercel) or use Vercel Postgres/Supabase, then copy
-     the connection string it gives you here.
+   - `DATABASE_URL` / `DIRECT_URL`: create a free database at
+     [Neon](https://neon.tech) (recommended — fastest signup, works great
+     with Vercel). Neon gives you two connection strings:
+     - The **pooled** one (hostname ends in `-pooler`) → `DATABASE_URL`,
+       used by the app at runtime via `@neondatabase/serverless`
+       (WebSocket-based, works well in serverless/Vercel functions).
+     - The **direct/unpooled** one (no `-pooler`) → `DIRECT_URL`, used only
+       by Prisma Migrate to run schema migrations (pooled connections
+       don't support the session features migrations need).
    - `AUTH_SECRET` is required by NextAuth to sign session tokens.
    - `TWILIO_*` variables are **optional** for local development. If left
      blank, verification codes are printed to the server console instead of
@@ -161,19 +168,19 @@ prisma/
 
 1. Push this repo to GitHub (already done) and import it in the
    [Vercel dashboard](https://vercel.com/new).
-2. Create a Postgres database (Neon is built into Vercel's integrations
-   marketplace, or bring your own connection string) and copy its
-   connection string.
+2. Create a Neon Postgres database (or use Vercel's Neon marketplace
+   integration) and grab both the **pooled** and **direct** connection
+   strings from its dashboard.
 3. In the Vercel project's **Settings → Environment Variables**, add every
-   variable from `.env` (`DATABASE_URL`, `AUTH_SECRET`, `TWILIO_*`,
-   `SPOTIFY_*`) — pointing `SPOTIFY_REDIRECT_URI` at your production URL,
-   e.g. `https://your-app.vercel.app/api/spotify/callback`.
+   variable from `.env` (`DATABASE_URL`, `DIRECT_URL`, `AUTH_SECRET`,
+   `TWILIO_*`, `SPOTIFY_*`) — pointing `SPOTIFY_REDIRECT_URI` at your
+   production URL, e.g. `https://your-app.vercel.app/api/spotify/callback`.
 4. Update the redirect URI in the Spotify Developer Dashboard to match
    exactly.
 5. Run migrations against the production database once, from your machine:
    ```bash
-   DATABASE_URL="<your production connection string>" npx prisma migrate deploy
-   DATABASE_URL="<your production connection string>" npm run seed
+   DATABASE_URL="<pooled connection string>" DIRECT_URL="<direct connection string>" npx prisma migrate deploy
+   DATABASE_URL="<pooled connection string>" npm run seed
    ```
 6. Deploy (Vercel will run `npm run build`, which generates the Prisma
    client automatically via the `build`/`postinstall` scripts).

@@ -1,11 +1,17 @@
 import { PrismaClient } from "@/generated/prisma/client";
-import { PrismaPg } from "@prisma/adapter-pg";
+import { PrismaNeon } from "@prisma/adapter-neon";
+import { neonConfig } from "@neondatabase/serverless";
+import ws from "ws";
+
+// Required for the Neon serverless driver to work outside edge/browser
+// runtimes (e.g. Node.js dev server, Vercel Node functions).
+neonConfig.webSocketConstructor = ws;
 
 const globalForPrisma = globalThis as unknown as {
   prisma: PrismaClient | undefined;
 };
 
-const adapter = new PrismaPg({
+const adapter = new PrismaNeon({
   connectionString: process.env.DATABASE_URL,
 });
 
