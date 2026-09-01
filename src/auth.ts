@@ -2,6 +2,7 @@ import NextAuth from "next-auth";
 import Credentials from "next-auth/providers/credentials";
 import bcrypt from "bcryptjs";
 import { prisma } from "@/lib/prisma";
+import { verifyTotpToken, compareRecoveryCode } from "@/lib/totp";
 
 export const { handlers, signIn, signOut, auth } = NextAuth({
   session: { strategy: "jwt" },
@@ -28,22 +29,31 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         const validPassword = await bcrypt.compare(password, user.passwordHash);
         if (!validPassword) return null;
 
-        if (user.twoFactorEnabled) {
+        if (user.totpEnabled) {
           if (!code) return null;
 
-          const codeValid =
-            user.twoFactorCode &&
-            user.twoFactorCode === code &&
-            user.twoFactorCodeExpires &&
-            user.twoFactorCodeExpires > new Date();
+          let valid = false;
 
-          if (!codeValid) return null;
+          if (user.totpSecret && verifyTotpToken(code, user.totpSecret)) {
+            valid = true;
+          } else {
+            // Fall back to checking unused recovery codes.
+            const unusedCodes = await prisma.recoveryCode.findMany({
+              where: { userId: user.id, usedAt: null },
+            });
+            for (const recoveryCode of unusedCodes) {
+              if (await compareRecoveryCode(code, recoveryCode.codeHash)) {
+                await prisma.recoveryCode.update({
+                  where: { id: recoveryCode.id },
+                  data: { usedAt: new Date() },
+                });
+                valid = true;
+                break;
+              }
+            }
+          }
 
-          // Invalidate the code after successful use.
-          await prisma.user.update({
-            where: { id: user.id },
-            data: { twoFactorCode: null, twoFactorCodeExpires: null },
-          });
+          if (!valid) return null;
         }
 
         return {

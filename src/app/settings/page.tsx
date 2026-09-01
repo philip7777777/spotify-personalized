@@ -15,9 +15,7 @@ export default async function SettingsPage() {
     where: { id: session.user.id },
     select: {
       username: true,
-      phone: true,
-      phoneVerified: true,
-      twoFactorEnabled: true,
+      totpEnabled: true,
       spotifyAccount: { select: { spotifyUserId: true } },
     },
   });
@@ -34,10 +32,7 @@ export default async function SettingsPage() {
         <Suspense fallback={null}>
           <SpotifySection connected={Boolean(user.spotifyAccount)} />
         </Suspense>
-        <SettingsForm
-          twoFactorEnabled={user.twoFactorEnabled}
-          phone={user.phone}
-        />
+        <SettingsForm totpEnabled={user.totpEnabled} />
       </div>
     </main>
   );

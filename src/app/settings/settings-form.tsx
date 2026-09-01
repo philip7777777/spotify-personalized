@@ -3,18 +3,14 @@
 import { useState } from "react";
 
 type Props = {
-  twoFactorEnabled: boolean;
-  phone: string | null;
+  totpEnabled: boolean;
 };
 
-export function SettingsForm({ twoFactorEnabled, phone }: Props) {
+export function SettingsForm({ totpEnabled }: Props) {
   return (
     <div className="space-y-10">
       <PasswordSection />
-      <TwoFactorSection
-        initialEnabled={twoFactorEnabled}
-        initialPhone={phone}
-      />
+      <TwoFactorSection initialEnabled={totpEnabled} />
     </div>
   );
 }
@@ -92,32 +88,39 @@ function PasswordSection() {
   );
 }
 
-function TwoFactorSection({
-  initialEnabled,
-  initialPhone,
-}: {
-  initialEnabled: boolean;
-  initialPhone: string | null;
-}) {
+function RecoveryCodesList({ codes }: { codes: string[] }) {
+  return (
+    <div className="space-y-2 rounded-md border border-amber-300 bg-amber-50 p-3">
+      <p className="text-sm font-medium text-amber-900">
+        Save these recovery codes now — each one can be used once if you
+        lose access to your authenticator app. They will not be shown again.
+      </p>
+      <ul className="grid grid-cols-2 gap-1 font-mono text-sm text-amber-950">
+        {codes.map((code) => (
+          <li key={code}>{code}</li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+function TwoFactorSection({ initialEnabled }: { initialEnabled: boolean }) {
   const [enabled, setEnabled] = useState(initialEnabled);
-  const [phone, setPhone] = useState(initialPhone ?? "");
+  const [enrolling, setEnrolling] = useState(false);
+  const [qrCodeDataUrl, setQrCodeDataUrl] = useState<string | null>(null);
+  const [secret, setSecret] = useState<string | null>(null);
   const [code, setCode] = useState("");
-  const [awaitingCode, setAwaitingCode] = useState(false);
+  const [recoveryCodes, setRecoveryCodes] = useState<string[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
-  async function handleEnroll(e: React.FormEvent) {
-    e.preventDefault();
+  async function handleStartEnroll() {
     setError(null);
     setMessage(null);
     setLoading(true);
 
-    const res = await fetch("/api/settings/2fa/enroll", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ phone }),
-    });
+    const res = await fetch("/api/settings/2fa/enroll", { method: "POST" });
     const data = await res.json().catch(() => ({}));
 
     setLoading(false);
@@ -127,8 +130,9 @@ function TwoFactorSection({
       return;
     }
 
-    setAwaitingCode(true);
-    setMessage("Code sent via text message");
+    setQrCodeDataUrl(data.qrCodeDataUrl);
+    setSecret(data.secret);
+    setEnrolling(true);
   }
 
   async function handleVerify(e: React.FormEvent) {
@@ -152,8 +156,11 @@ function TwoFactorSection({
     }
 
     setEnabled(true);
-    setAwaitingCode(false);
+    setEnrolling(false);
+    setQrCodeDataUrl(null);
+    setSecret(null);
     setCode("");
+    setRecoveryCodes(data.recoveryCodes);
     setMessage("Two-factor authentication enabled");
   }
 
@@ -172,31 +179,88 @@ function TwoFactorSection({
     }
 
     setEnabled(false);
+    setRecoveryCodes(null);
     setMessage("Two-factor authentication disabled");
+  }
+
+  async function handleRegenerateCodes() {
+    setError(null);
+    setMessage(null);
+    setLoading(true);
+
+    const res = await fetch("/api/settings/2fa/regenerate-codes", {
+      method: "POST",
+    });
+    const data = await res.json().catch(() => ({}));
+
+    setLoading(false);
+
+    if (!res.ok) {
+      setError(data.error ?? "Something went wrong");
+      return;
+    }
+
+    setRecoveryCodes(data.recoveryCodes);
+    setMessage("Recovery codes regenerated");
   }
 
   return (
     <div className="space-y-3 rounded-lg border p-4">
-      <h2 className="font-medium">Two-factor authentication (SMS)</h2>
+      <h2 className="font-medium">
+        Two-factor authentication (authenticator app)
+      </h2>
 
       {enabled ? (
         <>
           <p className="text-sm text-gray-500">
             2FA is enabled for this account.
           </p>
-          <button
-            onClick={handleDisable}
-            disabled={loading}
-            className="rounded-md border px-4 py-2 text-sm font-medium disabled:opacity-50"
-          >
-            {loading ? "Please wait…" : "Disable 2FA"}
-          </button>
+
+          {recoveryCodes && <RecoveryCodesList codes={recoveryCodes} />}
+
+          <div className="flex gap-2">
+            <button
+              onClick={handleRegenerateCodes}
+              disabled={loading}
+              className="rounded-md border px-4 py-2 text-sm font-medium disabled:opacity-50"
+            >
+              {loading ? "Please wait…" : "Regenerate recovery codes"}
+            </button>
+            <button
+              onClick={handleDisable}
+              disabled={loading}
+              className="rounded-md border px-4 py-2 text-sm font-medium disabled:opacity-50"
+            >
+              {loading ? "Please wait…" : "Disable 2FA"}
+            </button>
+          </div>
         </>
-      ) : awaitingCode ? (
+      ) : enrolling ? (
         <form onSubmit={handleVerify} className="space-y-3">
+          <p className="text-sm text-gray-500">
+            Scan this QR code with an authenticator app (Google
+            Authenticator, Authy, 1Password, etc.), then enter the 6-digit
+            code it shows.
+          </p>
+
+          {qrCodeDataUrl && (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={qrCodeDataUrl}
+              alt="2FA QR code"
+              className="h-48 w-48 rounded-md border"
+            />
+          )}
+
+          {secret && (
+            <p className="break-all text-xs text-gray-400">
+              Can&apos;t scan? Enter this key manually: {secret}
+            </p>
+          )}
+
           <div className="space-y-1">
             <label className="text-sm font-medium">
-              Enter the code we texted you
+              Enter the 6-digit code from your app
             </label>
             <input
               type="text"
@@ -206,6 +270,7 @@ function TwoFactorSection({
               value={code}
               onChange={(e) => setCode(e.target.value)}
               className="w-full rounded-md border px-3 py-2 text-sm tracking-widest"
+              autoFocus
             />
           </div>
           <button
@@ -217,26 +282,13 @@ function TwoFactorSection({
           </button>
         </form>
       ) : (
-        <form onSubmit={handleEnroll} className="space-y-3">
-          <div className="space-y-1">
-            <label className="text-sm font-medium">Phone number</label>
-            <input
-              type="tel"
-              required
-              placeholder="+15551234567"
-              value={phone}
-              onChange={(e) => setPhone(e.target.value)}
-              className="w-full rounded-md border px-3 py-2 text-sm"
-            />
-          </div>
-          <button
-            type="submit"
-            disabled={loading}
-            className="rounded-md bg-black px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
-          >
-            {loading ? "Sending…" : "Send verification code"}
-          </button>
-        </form>
+        <button
+          onClick={handleStartEnroll}
+          disabled={loading}
+          className="rounded-md bg-black px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+        >
+          {loading ? "Please wait…" : "Set up 2FA"}
+        </button>
       )}
 
       {error && <p className="text-sm text-red-600">{error}</p>}

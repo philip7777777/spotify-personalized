@@ -11,11 +11,12 @@ export async function POST() {
   await prisma.user.update({
     where: { id: session.user.id },
     data: {
-      twoFactorEnabled: false,
-      twoFactorCode: null,
-      twoFactorCodeExpires: null,
+      totpEnabled: false,
+      totpSecret: null,
     },
   });
+
+  await prisma.recoveryCode.deleteMany({ where: { userId: session.user.id } });
 
   return NextResponse.json({ success: true });
 }

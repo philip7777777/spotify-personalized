@@ -103,13 +103,12 @@ export default function LoginPage() {
         {requires2FA && (
           <div className="space-y-1">
             <label className="text-sm font-medium">
-              Enter the code texted to your phone
+              Enter the code from your authenticator app (or a recovery
+              code)
             </label>
             <input
               type="text"
               required
-              inputMode="numeric"
-              maxLength={6}
               value={code}
               onChange={(e) => setCode(e.target.value)}
               className="w-full rounded-md border px-3 py-2 text-sm tracking-widest"
