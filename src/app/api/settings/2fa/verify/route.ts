@@ -38,7 +38,7 @@ export async function POST(request: Request) {
   if (!codeValid) {
     return NextResponse.json(
       { error: "Code is invalid or expired" },
-      { status: 400 }
+      { status: 400 },
     );
   }
 

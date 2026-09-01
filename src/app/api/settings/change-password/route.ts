@@ -20,7 +20,7 @@ export async function POST(request: Request) {
   if (!parsed.success) {
     return NextResponse.json(
       { error: parsed.error.issues[0]?.message ?? "Invalid input" },
-      { status: 400 }
+      { status: 400 },
     );
   }
 
@@ -35,12 +35,12 @@ export async function POST(request: Request) {
 
   const validPassword = await bcrypt.compare(
     currentPassword,
-    user.passwordHash
+    user.passwordHash,
   );
   if (!validPassword) {
     return NextResponse.json(
       { error: "Current password is incorrect" },
-      { status: 401 }
+      { status: 401 },
     );
   }
 

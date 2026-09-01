@@ -25,7 +25,7 @@ export async function GET(request: Request) {
   if (!accessToken) {
     return NextResponse.json(
       { error: "Spotify account not connected" },
-      { status: 400 }
+      { status: 400 },
     );
   }
 
@@ -35,18 +35,21 @@ export async function GET(request: Request) {
 
   const res = await fetch(
     `${SPOTIFY_API_BASE}/me/tracks?limit=${limit}&offset=${offset}`,
-    { headers: { Authorization: `Bearer ${accessToken}` } }
+    { headers: { Authorization: `Bearer ${accessToken}` } },
   );
 
   if (!res.ok) {
     return NextResponse.json(
       { error: "Failed to fetch tracks from Spotify" },
-      { status: res.status }
+      { status: res.status },
     );
   }
 
-  const data: { items: SpotifySavedTrackItem[]; total: number; next: string | null } =
-    await res.json();
+  const data: {
+    items: SpotifySavedTrackItem[];
+    total: number;
+    next: string | null;
+  } = await res.json();
 
   // Only actual songs, never podcast episodes. No album art / images included.
   const tracks = data.items

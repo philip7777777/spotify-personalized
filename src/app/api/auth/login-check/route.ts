@@ -28,7 +28,7 @@ export async function POST(request: Request) {
   if (!user) {
     return NextResponse.json(
       { error: "Invalid username or password" },
-      { status: 401 }
+      { status: 401 },
     );
   }
 
@@ -36,7 +36,7 @@ export async function POST(request: Request) {
   if (!validPassword) {
     return NextResponse.json(
       { error: "Invalid username or password" },
-      { status: 401 }
+      { status: 401 },
     );
   }
 
@@ -47,7 +47,7 @@ export async function POST(request: Request) {
   if (!user.phone) {
     return NextResponse.json(
       { error: "2FA is enabled but no phone number is on file" },
-      { status: 400 }
+      { status: 400 },
     );
   }
 

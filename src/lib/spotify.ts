@@ -41,7 +41,7 @@ function basicAuthHeader(): string {
 }
 
 export async function exchangeCodeForTokens(
-  code: string
+  code: string,
 ): Promise<TokenResponse> {
   const res = await fetch(`${SPOTIFY_ACCOUNTS_BASE}/api/token`, {
     method: "POST",
@@ -64,7 +64,7 @@ export async function exchangeCodeForTokens(
 }
 
 export async function refreshAccessToken(
-  refreshToken: string
+  refreshToken: string,
 ): Promise<TokenResponse> {
   const res = await fetch(`${SPOTIFY_ACCOUNTS_BASE}/api/token`, {
     method: "POST",

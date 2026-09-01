@@ -26,7 +26,7 @@ export async function sendSmsCode(phone: string, code: string): Promise<void> {
 
   if (!client || !fromNumber) {
     console.warn(
-      `[dev] Twilio not configured. Verification code for ${phone}: ${code}`
+      `[dev] Twilio not configured. Verification code for ${phone}: ${code}`,
     );
     return;
   }

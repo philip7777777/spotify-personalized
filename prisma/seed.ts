@@ -43,7 +43,7 @@ async function main() {
   console.log(`  username: ${user.username}`);
   console.log(`  password: ${password}`);
   console.log(
-    "\nSave this password now — it will not be shown again. Log in at /login, then change it from /settings if you'd like."
+    "\nSave this password now — it will not be shown again. Log in at /login, then change it from /settings if you'd like.",
   );
 }
 

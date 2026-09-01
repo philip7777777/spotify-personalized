@@ -7,7 +7,7 @@ import { refreshAccessToken } from "@/lib/spotify";
  * Returns null if the user has no linked Spotify account.
  */
 export async function getValidSpotifyAccessToken(
-  userId: string
+  userId: string,
 ): Promise<string | null> {
   const account = await prisma.spotifyAccount.findUnique({
     where: { userId },

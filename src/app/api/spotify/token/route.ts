@@ -18,7 +18,7 @@ export async function GET() {
   if (!accessToken) {
     return NextResponse.json(
       { error: "Spotify account not connected" },
-      { status: 400 }
+      { status: 400 },
     );
   }
 

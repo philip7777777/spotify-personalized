@@ -30,7 +30,7 @@ export async function POST(request: Request) {
   if (!accessToken) {
     return NextResponse.json(
       { error: "Spotify account not connected" },
-      { status: 400 }
+      { status: 400 },
     );
   }
 
@@ -45,14 +45,14 @@ export async function POST(request: Request) {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({ uris }),
-    }
+    },
   );
 
   if (!res.ok && res.status !== 204) {
     const text = await res.text().catch(() => "");
     return NextResponse.json(
       { error: `Playback failed: ${res.status} ${text}` },
-      { status: res.status }
+      { status: res.status },
     );
   }
 

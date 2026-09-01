@@ -20,13 +20,16 @@ export async function GET(request: NextRequest) {
 
   if (error) {
     return NextResponse.redirect(
-      new URL(`/settings?spotify_error=${encodeURIComponent(error)}`, request.url)
+      new URL(
+        `/settings?spotify_error=${encodeURIComponent(error)}`,
+        request.url,
+      ),
     );
   }
 
   if (!code || !state || !expectedState || state !== expectedState) {
     return NextResponse.redirect(
-      new URL("/settings?spotify_error=invalid_state", request.url)
+      new URL("/settings?spotify_error=invalid_state", request.url),
     );
   }
 
@@ -56,12 +59,12 @@ export async function GET(request: NextRequest) {
   } catch (err) {
     console.error("Spotify OAuth callback failed:", err);
     return NextResponse.redirect(
-      new URL("/settings?spotify_error=token_exchange_failed", request.url)
+      new URL("/settings?spotify_error=token_exchange_failed", request.url),
     );
   }
 
   const res = NextResponse.redirect(
-    new URL("/settings?spotify_connected=1", request.url)
+    new URL("/settings?spotify_connected=1", request.url),
   );
   res.cookies.delete(STATE_COOKIE);
   return res;

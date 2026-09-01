@@ -67,7 +67,8 @@ export function LibraryClient() {
   useEffect(() => {
     fetch("/api/spotify/tracks")
       .then(async (res) => {
-        if (!res.ok) throw new Error((await res.json()).error ?? "Failed to load");
+        if (!res.ok)
+          throw new Error((await res.json()).error ?? "Failed to load");
         return res.json();
       })
       .then((data) => setTracks(data.tracks))
@@ -134,9 +135,7 @@ export function LibraryClient() {
         <h1 className="text-xl font-semibold">Your Library</h1>
 
         {!sdkReady && (
-          <p className="text-sm text-gray-500">
-            Connecting to Spotify player…
-          </p>
+          <p className="text-sm text-gray-500">Connecting to Spotify player…</p>
         )}
 
         {loading && <p className="text-sm text-gray-500">Loading tracks…</p>}
