@@ -76,6 +76,12 @@ export function LibraryClient() {
   const [sdkReady, setSdkReady] = useState(false);
   const [deviceId, setDeviceId] = useState<string | null>(null);
   const [currentUri, setCurrentUri] = useState<string | null>(null);
+  const [currentTrackName, setCurrentTrackName] = useState<string | null>(
+    null,
+  );
+  const [currentTrackArtist, setCurrentTrackArtist] = useState<string | null>(
+    null,
+  );
   const [isPaused, setIsPaused] = useState(true);
   const [position, setPosition] = useState(0);
   const [duration, setDuration] = useState(0);
@@ -149,6 +155,12 @@ export function LibraryClient() {
         const state = arg as SpotifyPlayerState;
         if (!state) return;
         setCurrentUri(state.track_window.current_track.uri);
+        setCurrentTrackName(state.track_window.current_track.name);
+        setCurrentTrackArtist(
+          state.track_window.current_track.artists
+            .map((a) => a.name)
+            .join(", "),
+        );
         setIsPaused(state.paused);
         setPosition(state.position);
         setDuration(state.duration);
@@ -215,10 +227,21 @@ export function LibraryClient() {
 
   const displayedTracks =
     view === "dailyMixes" && selectedMix ? mixTracks : tracks;
-  const currentTrack =
+  // Prefer duration from the loaded track list (more reliable than the
+  // SDK, which sometimes reports 0 briefly), but always fall back to the
+  // SDK's own reported name/artist so the bar shows even if the tracks
+  // list failed to load or doesn't contain the currently playing track.
+  const matchedTrack =
     tracks.find((t) => t.uri === currentUri) ??
     mixTracks.find((t) => t.uri === currentUri) ??
     null;
+  const currentTrack =
+    currentUri && (matchedTrack || currentTrackName)
+      ? {
+          name: matchedTrack?.name ?? currentTrackName ?? "",
+          artist: matchedTrack?.artist ?? currentTrackArtist ?? "",
+        }
+      : null;
 
   return (
     <main className="flex flex-1 flex-col items-center p-8">
