@@ -17,12 +17,22 @@ export function SpotifySection({ connected }: { connected: boolean }) {
           <p className="text-sm text-gray-500">
             Your Spotify account is connected.
           </p>
-          <Link
-            href="/library"
-            className="inline-block rounded-md bg-black px-4 py-2 text-sm font-medium text-white"
-          >
-            Go to library
-          </Link>
+          <div className="flex gap-2">
+            <Link
+              href="/library"
+              className="inline-block rounded-md bg-black px-4 py-2 text-sm font-medium text-white"
+            >
+              Go to library
+            </Link>
+            <form action="/api/spotify/disconnect" method="POST">
+              <button
+                type="submit"
+                className="inline-block rounded-md border px-4 py-2 text-sm font-medium"
+              >
+                Disconnect Spotify
+              </button>
+            </form>
+          </div>
         </>
       ) : (
         <>
