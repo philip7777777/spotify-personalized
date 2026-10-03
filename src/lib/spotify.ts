@@ -5,10 +5,11 @@ const CLIENT_ID = process.env.SPOTIFY_CLIENT_ID!;
 const CLIENT_SECRET = process.env.SPOTIFY_CLIENT_SECRET!;
 const REDIRECT_URI = process.env.SPOTIFY_REDIRECT_URI!;
 
-// Library read + playback control + Web Playback SDK streaming.
+// Library read/modify + playback control + Web Playback SDK streaming.
 export const SPOTIFY_SCOPES = [
   "user-read-email",
   "user-library-read",
+  "user-library-modify",
   "playlist-read-private",
   "streaming",
   "user-read-playback-state",

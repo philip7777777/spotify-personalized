@@ -18,6 +18,8 @@ type DailyMix = {
   trackCount: number;
 };
 
+type SearchTrack = Track & { saved: boolean };
+
 // Minimal shape of the bits of the Spotify Web Playback SDK we use.
 type SpotifyPlayerState = {
   paused: boolean;
@@ -64,7 +66,9 @@ export function LibraryClient() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const [view, setView] = useState<"library" | "dailyMixes">("library");
+  const [view, setView] = useState<"library" | "dailyMixes" | "search">(
+    "library",
+  );
   const [dailyMixes, setDailyMixes] = useState<DailyMix[]>([]);
   const [mixesLoading, setMixesLoading] = useState(false);
   const [mixesError, setMixesError] = useState<string | null>(null);
@@ -73,12 +77,16 @@ export function LibraryClient() {
   const [mixTracks, setMixTracks] = useState<Track[]>([]);
   const [mixTracksLoading, setMixTracksLoading] = useState(false);
 
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchResults, setSearchResults] = useState<SearchTrack[]>([]);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [searchError, setSearchError] = useState<string | null>(null);
+  const [likingTrackId, setLikingTrackId] = useState<string | null>(null);
+
   const [sdkReady, setSdkReady] = useState(false);
   const [deviceId, setDeviceId] = useState<string | null>(null);
   const [currentUri, setCurrentUri] = useState<string | null>(null);
-  const [currentTrackName, setCurrentTrackName] = useState<string | null>(
-    null,
-  );
+  const [currentTrackName, setCurrentTrackName] = useState<string | null>(null);
   const [currentTrackArtist, setCurrentTrackArtist] = useState<string | null>(
     null,
   );
@@ -122,6 +130,34 @@ export function LibraryClient() {
         setMixesFetched(true);
       });
   }, [view, mixesFetched, mixesLoading]);
+
+  // Debounced search: wait for the user to stop typing before querying.
+  useEffect(() => {
+    if (view !== "search") return;
+    const query = searchQuery.trim();
+    if (!query) {
+      setSearchResults([]);
+      setSearchError(null);
+      setSearchLoading(false);
+      return;
+    }
+
+    setSearchLoading(true);
+    setSearchError(null);
+    const timeout = setTimeout(() => {
+      fetch(`/api/spotify/search?q=${encodeURIComponent(query)}`)
+        .then(async (res) => {
+          if (!res.ok)
+            throw new Error((await res.json()).error ?? "Search failed");
+          return res.json();
+        })
+        .then((data) => setSearchResults(data.tracks))
+        .catch((err) => setSearchError(err.message))
+        .finally(() => setSearchLoading(false));
+    }, 400);
+
+    return () => clearTimeout(timeout);
+  }, [view, searchQuery]);
 
   // Load the Web Playback SDK script and initialize the player.
   useEffect(() => {
@@ -216,6 +252,45 @@ export function LibraryClient() {
     }
   }
 
+  async function playSearchResult(index: number) {
+    if (!deviceId) return;
+    await fetch("/api/spotify/play", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        deviceId,
+        uris: searchResults.map((t) => t.uri),
+        offset: index,
+      }),
+    });
+  }
+
+  async function toggleLike(track: SearchTrack) {
+    setLikingTrackId(track.id);
+    try {
+      const res = await fetch("/api/spotify/like", {
+        method: track.saved ? "DELETE" : "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ trackId: track.id }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error ?? "Failed to update Liked Songs");
+      }
+      setSearchResults((prev) =>
+        prev.map((t) =>
+          t.id === track.id ? { ...t, saved: !track.saved } : t,
+        ),
+      );
+    } catch (err) {
+      setSearchError(
+        err instanceof Error ? err.message : "Failed to update Liked Songs",
+      );
+    } finally {
+      setLikingTrackId(null);
+    }
+  }
+
   async function handleSeek(e: React.ChangeEvent<HTMLInputElement>) {
     setPosition(Number(e.target.value));
   }
@@ -234,6 +309,7 @@ export function LibraryClient() {
   const matchedTrack =
     tracks.find((t) => t.uri === currentUri) ??
     mixTracks.find((t) => t.uri === currentUri) ??
+    searchResults.find((t) => t.uri === currentUri) ??
     null;
   const currentTrack =
     currentUri && (matchedTrack || currentTrackName)
@@ -256,9 +332,7 @@ export function LibraryClient() {
           <button
             onClick={() => setView("library")}
             className={`px-3 py-2 text-sm font-medium ${
-              view === "library"
-                ? "border-b-2 border-black"
-                : "text-gray-500"
+              view === "library" ? "border-b-2 border-black" : "text-gray-500"
             }`}
           >
             Liked Songs
@@ -272,6 +346,14 @@ export function LibraryClient() {
             }`}
           >
             Daily Mixes
+          </button>
+          <button
+            onClick={() => setView("search")}
+            className={`px-3 py-2 text-sm font-medium ${
+              view === "search" ? "border-b-2 border-black" : "text-gray-500"
+            }`}
+          >
+            Search
           </button>
         </div>
 
@@ -334,9 +416,7 @@ export function LibraryClient() {
             {mixesLoading && (
               <p className="text-sm text-gray-500">Loading Daily Mixes…</p>
             )}
-            {mixesError && (
-              <p className="text-sm text-red-600">{mixesError}</p>
-            )}
+            {mixesError && <p className="text-sm text-red-600">{mixesError}</p>}
 
             <ul className="divide-y rounded-lg border pb-20">
               {dailyMixes.map((mix) => (
@@ -346,9 +426,7 @@ export function LibraryClient() {
                     className="flex w-full items-center justify-between gap-4 px-4 py-3 text-left hover:bg-gray-50"
                   >
                     <div className="min-w-0">
-                      <p className="truncate text-sm font-medium">
-                        {mix.name}
-                      </p>
+                      <p className="truncate text-sm font-medium">{mix.name}</p>
                       <p className="truncate text-xs text-gray-500">
                         {mix.trackCount} songs
                       </p>
@@ -360,9 +438,9 @@ export function LibraryClient() {
 
             {!mixesLoading && dailyMixes.length === 0 && !mixesError && (
               <p className="text-sm text-gray-500">
-                No Daily Mixes found. Spotify generates these automatically
-                over time — make sure you have some listening history, or
-                try refreshing.
+                No Daily Mixes found. Spotify generates these automatically over
+                time — make sure you have some listening history, or try
+                refreshing.
               </p>
             )}
           </>
@@ -411,6 +489,80 @@ export function LibraryClient() {
                           isCurrent
                             ? playerRef.current?.togglePlay()
                             : playTrack(index)
+                        }
+                        disabled={!sdkReady}
+                        className="rounded-md border px-3 py-1 text-xs font-medium disabled:opacity-50"
+                      >
+                        {isCurrent && !isPaused ? "Pause" : "Play"}
+                      </button>
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+          </>
+        )}
+
+        {view === "search" && (
+          <>
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search songs…"
+              className="w-full rounded-md border px-3 py-2 text-sm"
+              autoFocus
+            />
+
+            {searchLoading && (
+              <p className="text-sm text-gray-500">Searching…</p>
+            )}
+            {searchError && (
+              <p className="text-sm text-red-600">{searchError}</p>
+            )}
+            {!searchLoading &&
+              !searchError &&
+              searchQuery.trim() &&
+              searchResults.length === 0 && (
+                <p className="text-sm text-gray-500">No results found.</p>
+              )}
+
+            <ul className="divide-y rounded-lg border pb-20">
+              {searchResults.map((track, index) => {
+                const isCurrent = currentUri === track.uri;
+                return (
+                  <li
+                    key={track.id}
+                    className="flex items-center justify-between gap-4 px-4 py-3"
+                  >
+                    <div className="min-w-0">
+                      <p
+                        className={`truncate text-sm font-medium ${
+                          isCurrent ? "text-green-600" : ""
+                        }`}
+                      >
+                        {track.name}
+                      </p>
+                      <p className="truncate text-xs text-gray-500">
+                        {track.artist}
+                      </p>
+                    </div>
+                    <div className="flex shrink-0 items-center gap-3">
+                      <span className="text-xs text-gray-400">
+                        {formatDuration(track.durationMs)}
+                      </span>
+                      <button
+                        onClick={() => toggleLike(track)}
+                        disabled={likingTrackId === track.id}
+                        className="rounded-md border px-3 py-1 text-xs font-medium disabled:opacity-50"
+                      >
+                        {track.saved ? "Unlike" : "Like"}
+                      </button>
+                      <button
+                        onClick={() =>
+                          isCurrent
+                            ? playerRef.current?.togglePlay()
+                            : playSearchResult(index)
                         }
                         disabled={!sdkReady}
                         className="rounded-md border px-3 py-1 text-xs font-medium disabled:opacity-50"

@@ -54,7 +54,8 @@ export async function GET() {
   }
 
   const PAGE_SIZE = 50;
-  let url: string | null = `${SPOTIFY_API_BASE}/me/playlists?limit=${PAGE_SIZE}`;
+  let url: string | null =
+    `${SPOTIFY_API_BASE}/me/playlists?limit=${PAGE_SIZE}`;
   const allPlaylists: SpotifyPlaylist[] = [];
 
   try {

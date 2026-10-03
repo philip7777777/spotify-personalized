@@ -103,8 +103,7 @@ export default function LoginPage() {
         {requires2FA && (
           <div className="space-y-1">
             <label className="text-sm font-medium">
-              Enter the code from your authenticator app (or a recovery
-              code)
+              Enter the code from your authenticator app (or a recovery code)
             </label>
             <input
               type="text"

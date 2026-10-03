@@ -41,7 +41,9 @@ export async function spotifyFetch(
   let retries = 0;
   while (res.status === 429) {
     const retryAfterHeader = res.headers.get("Retry-After");
-    const retryAfterSeconds = retryAfterHeader ? Number(retryAfterHeader) || 1 : 1;
+    const retryAfterSeconds = retryAfterHeader
+      ? Number(retryAfterHeader) || 1
+      : 1;
 
     if (retryAfterSeconds > SHORT_RETRY_CAP_SECONDS) {
       // Long penalty — stop hitting Spotify entirely until it clears.
@@ -93,3 +95,6 @@ export function setCached(key: string, data: unknown, ttlMs: number): void {
   cache.set(key, { data, expiresAt: Date.now() + ttlMs });
 }
 
+export function clearCached(key: string): void {
+  cache.delete(key);
+}

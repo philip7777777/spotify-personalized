@@ -92,8 +92,8 @@ function RecoveryCodesList({ codes }: { codes: string[] }) {
   return (
     <div className="space-y-2 rounded-md border border-amber-300 bg-amber-50 p-3">
       <p className="text-sm font-medium text-amber-900">
-        Save these recovery codes now — each one can be used once if you
-        lose access to your authenticator app. They will not be shown again.
+        Save these recovery codes now — each one can be used once if you lose
+        access to your authenticator app. They will not be shown again.
       </p>
       <ul className="grid grid-cols-2 gap-1 font-mono text-sm text-amber-950">
         {codes.map((code) => (
@@ -238,9 +238,8 @@ function TwoFactorSection({ initialEnabled }: { initialEnabled: boolean }) {
       ) : enrolling ? (
         <form onSubmit={handleVerify} className="space-y-3">
           <p className="text-sm text-gray-500">
-            Scan this QR code with an authenticator app (Google
-            Authenticator, Authy, 1Password, etc.), then enter the 6-digit
-            code it shows.
+            Scan this QR code with an authenticator app (Google Authenticator,
+            Authy, 1Password, etc.), then enter the 6-digit code it shows.
           </p>
 
           {qrCodeDataUrl && (
