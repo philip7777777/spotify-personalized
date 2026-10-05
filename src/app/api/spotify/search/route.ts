@@ -42,7 +42,12 @@ export async function GET(request: Request) {
   }
 
   try {
-    const searchUrl = `${SPOTIFY_API_BASE}/search?type=track&limit=20&q=${encodeURIComponent(q)}`;
+    const searchParamsOut = new URLSearchParams({
+      type: "track",
+      limit: "10",
+      q,
+    });
+    const searchUrl = `${SPOTIFY_API_BASE}/search?${searchParamsOut.toString()}`;
     const res = await spotifyFetch(searchUrl, {
       headers: { Authorization: `Bearer ${accessToken}` },
     });
