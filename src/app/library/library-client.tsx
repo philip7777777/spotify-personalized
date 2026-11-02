@@ -69,6 +69,46 @@ function formatDuration(ms: number): string {
   return `${minutes}:${seconds.toString().padStart(2, "0")}`;
 }
 
+// Renders a simple green music-note icon to a PNG data URL, for use as the
+// Media Session artwork so the OS Now Playing widget (lock screen, Control
+// Center, CarPlay) shows a music icon instead of no artwork at all.
+function generateMusicIconDataUrl(size: number): string {
+  const canvas = document.createElement("canvas");
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return "";
+
+  ctx.fillStyle = "#1DB954"; // Spotify green
+  ctx.fillRect(0, 0, size, size);
+
+  ctx.fillStyle = "#ffffff";
+  ctx.strokeStyle = "#ffffff";
+  const s = size / 100; // scale factor against a 100x100 design grid
+  ctx.lineWidth = 6 * s;
+
+  // Stem
+  ctx.beginPath();
+  ctx.moveTo(60 * s, 20 * s);
+  ctx.lineTo(60 * s, 68 * s);
+  ctx.stroke();
+
+  // Flag
+  ctx.beginPath();
+  ctx.moveTo(60 * s, 20 * s);
+  ctx.quadraticCurveTo(85 * s, 28 * s, 78 * s, 45 * s);
+  ctx.quadraticCurveTo(70 * s, 36 * s, 60 * s, 36 * s);
+  ctx.closePath();
+  ctx.fill();
+
+  // Note head
+  ctx.beginPath();
+  ctx.ellipse(48 * s, 72 * s, 14 * s, 10 * s, -0.3, 0, Math.PI * 2);
+  ctx.fill();
+
+  return canvas.toDataURL("image/png");
+}
+
 export function LibraryClient() {
   const [tracks, setTracks] = useState<Track[]>([]);
   const [loading, setLoading] = useState(true);
@@ -303,13 +343,42 @@ export function LibraryClient() {
       return;
 
     if (currentTrackName) {
+      const artworkUrl = generateMusicIconDataUrl(512);
       navigator.mediaSession.metadata = new MediaMetadata({
         title: currentTrackName,
         artist: currentTrackArtist ?? undefined,
+        artwork: artworkUrl
+          ? [
+              { src: artworkUrl, sizes: "512x512", type: "image/png" },
+            ]
+          : [],
       });
     }
     navigator.mediaSession.playbackState = isPaused ? "paused" : "playing";
   }, [currentTrackName, currentTrackArtist, isPaused]);
+
+  // Report the current playback position/duration so the Now Playing
+  // widget can show elapsed/remaining time and a scrubber, not just
+  // play/pause controls.
+  useEffect(() => {
+    if (
+      typeof navigator === "undefined" ||
+      !("mediaSession" in navigator) ||
+      !("setPositionState" in navigator.mediaSession) ||
+      !duration
+    )
+      return;
+    try {
+      navigator.mediaSession.setPositionState({
+        duration: duration / 1000,
+        position: Math.min(position, duration) / 1000,
+        playbackRate: 1,
+      });
+    } catch {
+      // Some browsers throw if position/duration are momentarily out of
+      // sync (e.g. during a track change) — safe to ignore.
+    }
+  }, [position, duration]);
 
   // iOS attributes the Now Playing / lock screen / CarPlay media session to
   // whichever frame actually holds a playing audio/video element. The
