@@ -110,6 +110,7 @@ export function LibraryClient() {
   const [seeking, setSeeking] = useState(false);
 
   const playerRef = useRef<SpotifyPlayer | null>(null);
+  const silentAudioRef = useRef<HTMLAudioElement | null>(null);
 
   // Load saved tracks (already filtered server-side to real tracks only).
   useEffect(() => {
@@ -309,6 +310,56 @@ export function LibraryClient() {
     }
     navigator.mediaSession.playbackState = isPaused ? "paused" : "playing";
   }, [currentTrackName, currentTrackArtist, isPaused]);
+
+  // iOS attributes the Now Playing / lock screen / CarPlay media session to
+  // whichever frame actually holds a playing audio/video element. The
+  // Spotify Web Playback SDK decodes audio inside its own cross-origin
+  // iframe (sdk.scdn.co), so iOS shows *that* frame's generic "Spotify"
+  // widget (play + ±10s skip, no track name) instead of our page's
+  // MediaSession metadata and previous/next handlers. Keeping a silent,
+  // looping <audio> element playing in our own document tricks iOS into
+  // treating our page as the active media session instead, so our
+  // metadata/title and previous/next handlers show up on the lock screen,
+  // Control Center, and CarPlay.
+  useEffect(() => {
+    const audio = silentAudioRef.current;
+    if (!audio) return;
+    if (currentUri && !isPaused) {
+      audio.play().catch(() => {
+        // Autoplay can be blocked until the user interacts with the page;
+        // it will succeed once they've tapped Play at least once.
+      });
+    } else {
+      audio.pause();
+    }
+  }, [currentUri, isPaused]);
+
+  // Generate a real (but silent) looping audio stream and attach it to the
+  // hidden <audio> element below, so the browser has genuine audio content
+  // to play (data-URI/static file approaches are fragile across browsers).
+  useEffect(() => {
+    const AudioContextCtor =
+      window.AudioContext ||
+      (window as unknown as { webkitAudioContext?: typeof AudioContext })
+        .webkitAudioContext;
+    if (!AudioContextCtor || !silentAudioRef.current) return;
+
+    const ctx = new AudioContextCtor();
+    const destination = ctx.createMediaStreamDestination();
+    const buffer = ctx.createBuffer(1, ctx.sampleRate, ctx.sampleRate);
+    const source = ctx.createBufferSource();
+    source.buffer = buffer; // all-zero buffer = silence
+    source.loop = true;
+    source.connect(destination);
+    source.start();
+
+    silentAudioRef.current.srcObject = destination.stream;
+
+    return () => {
+      source.stop();
+      ctx.close();
+    };
+  }, []);
 
   async function playTrack(index: number) {
     if (!deviceId) return;
@@ -535,6 +586,17 @@ export function LibraryClient() {
 
   return (
     <main className="flex flex-1 flex-col items-center p-8">
+      {/* Silent, looping audio element — see the effect above for why this
+          exists. It has no audible content; it only exists so iOS treats
+          this page (rather than the Spotify SDK's iframe) as the active
+          Now Playing / lock screen media session. */}
+      <audio
+        ref={silentAudioRef}
+        loop
+        playsInline
+        aria-hidden="true"
+        className="hidden"
+      />
       <div className="w-full max-w-2xl space-y-6">
         <h1 className="text-xl font-semibold">Your Library</h1>
 
