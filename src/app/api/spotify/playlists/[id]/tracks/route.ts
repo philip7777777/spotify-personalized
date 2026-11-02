@@ -23,6 +23,7 @@ type SpotifyPlaylistTrackItem = {
 };
 
 type PlaylistTracksResponse = {
+  name?: string;
   tracks: {
     id: string;
     uri: string;
@@ -64,6 +65,20 @@ export async function GET(
     return NextResponse.json(cached);
   }
 
+  let playlistName: string | undefined;
+  try {
+    const metaRes = await spotifyFetch(
+      `${SPOTIFY_API_BASE}/playlists/${id}?fields=name`,
+      { headers: { Authorization: `Bearer ${accessToken}` } },
+    );
+    if (metaRes.ok) {
+      const meta: { name: string } = await metaRes.json();
+      playlistName = meta.name;
+    }
+  } catch {
+    // Non-fatal — we can still show tracks without a name.
+  }
+
   const PAGE_SIZE = 100;
   let url: string | null =
     `${SPOTIFY_API_BASE}/playlists/${id}/tracks?limit=${PAGE_SIZE}`;
@@ -81,7 +96,14 @@ export async function GET(
           `Spotify /playlists/${id}/tracks failed: ${res.status} ${body}`,
         );
         return NextResponse.json(
-          { error: "Failed to fetch playlist tracks from Spotify" },
+          {
+            error:
+              res.status === 403
+                ? "Spotify won't allow access to this playlist's tracks (it may be a restricted, private, or algorithmic playlist)."
+                : res.status === 404
+                  ? "Playlist not found. Double-check the link is correct and the playlist still exists."
+                  : "Failed to fetch playlist tracks from Spotify",
+          },
           { status: res.status },
         );
       }
@@ -117,7 +139,7 @@ export async function GET(
       durationMs: item.track!.duration_ms,
     }));
 
-  const responseBody: PlaylistTracksResponse = { tracks };
+  const responseBody: PlaylistTracksResponse = { name: playlistName, tracks };
   setCached(cacheKey, responseBody, CACHE_TTL_MS);
 
   return NextResponse.json(responseBody);

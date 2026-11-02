@@ -20,6 +20,14 @@ type DailyMix = {
 
 type SearchTrack = Track & { saved: boolean };
 
+type SearchAlbum = {
+  id: string;
+  name: string;
+  artist: string;
+  trackCount: number;
+  imageUrl: string | null;
+};
+
 // Minimal shape of the bits of the Spotify Web Playback SDK we use.
 type SpotifyPlayerState = {
   paused: boolean;
@@ -79,9 +87,15 @@ export function LibraryClient() {
 
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<SearchTrack[]>([]);
+  const [searchAlbums, setSearchAlbums] = useState<SearchAlbum[]>([]);
   const [searchLoading, setSearchLoading] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
   const [likingTrackId, setLikingTrackId] = useState<string | null>(null);
+  const [playingAlbumId, setPlayingAlbumId] = useState<string | null>(null);
+  const [selectedAlbum, setSelectedAlbum] = useState<SearchAlbum | null>(null);
+  const [albumTracks, setAlbumTracks] = useState<SearchTrack[]>([]);
+  const [albumTracksLoading, setAlbumTracksLoading] = useState(false);
+  const [albumTracksError, setAlbumTracksError] = useState<string | null>(null);
 
   const [sdkReady, setSdkReady] = useState(false);
   const [deviceId, setDeviceId] = useState<string | null>(null);
@@ -137,6 +151,7 @@ export function LibraryClient() {
     const query = searchQuery.trim();
     if (!query) {
       setSearchResults([]);
+      setSearchAlbums([]);
       setSearchError(null);
       setSearchLoading(false);
       return;
@@ -151,7 +166,10 @@ export function LibraryClient() {
             throw new Error((await res.json()).error ?? "Search failed");
           return res.json();
         })
-        .then((data) => setSearchResults(data.tracks))
+        .then((data) => {
+          setSearchResults(data.tracks);
+          setSearchAlbums(data.albums ?? []);
+        })
         .catch((err) => setSearchError(err.message))
         .finally(() => setSearchLoading(false));
     }, 400);
@@ -211,6 +229,26 @@ export function LibraryClient() {
     };
   }, []);
 
+  // iOS Safari (and some other mobile browsers) suspend the Web Playback
+  // SDK's underlying connection when the tab is backgrounded, and it doesn't
+  // always reconnect on its own. When the page becomes visible again, force
+  // a reconnect so the play/pause buttons don't stay unresponsive.
+  useEffect(() => {
+    function handleVisibilityChange() {
+      if (document.visibilityState === "visible") {
+        playerRef.current?.connect();
+      }
+    }
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    window.addEventListener("pageshow", handleVisibilityChange);
+    window.addEventListener("focus", handleVisibilityChange);
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      window.removeEventListener("pageshow", handleVisibilityChange);
+      window.removeEventListener("focus", handleVisibilityChange);
+    };
+  }, []);
+
   // Tick the displayed position forward while playing (player_state_changed
   // only fires on actual transitions, not continuously).
   useEffect(() => {
@@ -220,6 +258,57 @@ export function LibraryClient() {
     }, 500);
     return () => clearInterval(interval);
   }, [isPaused, duration, seeking]);
+
+  // Wire up the Media Session API so OS-level media controls — lock
+  // screen, Control Center, and CarPlay's Now Playing screen — can show
+  // track info and drive play/pause/previous/next. This is the only way
+  // a web app can integrate with CarPlay (true native CarPlay support
+  // requires a native iOS app with CarPlay entitlements).
+  useEffect(() => {
+    if (typeof navigator === "undefined" || !("mediaSession" in navigator))
+      return;
+
+    navigator.mediaSession.setActionHandler("play", () => {
+      playerRef.current?.togglePlay();
+    });
+    navigator.mediaSession.setActionHandler("pause", () => {
+      playerRef.current?.togglePlay();
+    });
+    navigator.mediaSession.setActionHandler("previoustrack", () => {
+      playerRef.current?.previousTrack();
+    });
+    navigator.mediaSession.setActionHandler("nexttrack", () => {
+      playerRef.current?.nextTrack();
+    });
+    navigator.mediaSession.setActionHandler("seekto", (details) => {
+      if (details.seekTime != null) {
+        playerRef.current?.seek(details.seekTime * 1000);
+      }
+    });
+
+    return () => {
+      navigator.mediaSession.setActionHandler("play", null);
+      navigator.mediaSession.setActionHandler("pause", null);
+      navigator.mediaSession.setActionHandler("previoustrack", null);
+      navigator.mediaSession.setActionHandler("nexttrack", null);
+      navigator.mediaSession.setActionHandler("seekto", null);
+    };
+  }, []);
+
+  // Keep the OS media session metadata and playback state in sync with
+  // what's actually playing.
+  useEffect(() => {
+    if (typeof navigator === "undefined" || !("mediaSession" in navigator))
+      return;
+
+    if (currentTrackName) {
+      navigator.mediaSession.metadata = new MediaMetadata({
+        title: currentTrackName,
+        artist: currentTrackArtist ?? undefined,
+      });
+    }
+    navigator.mediaSession.playbackState = isPaused ? "paused" : "playing";
+  }, [currentTrackName, currentTrackArtist, isPaused]);
 
   async function playTrack(index: number) {
     if (!deviceId) return;
@@ -252,6 +341,25 @@ export function LibraryClient() {
     }
   }
 
+  function extractPlaylistId(input: string): string | null {
+    const trimmed = input.trim();
+    // spotify:playlist:ID
+    const uriMatch = trimmed.match(/^spotify:playlist:([a-zA-Z0-9]+)/);
+    if (uriMatch) return uriMatch[1];
+    // https://open.spotify.com/playlist/ID?si=...
+    try {
+      const url = new URL(trimmed);
+      const parts = url.pathname.split("/").filter(Boolean);
+      const idx = parts.indexOf("playlist");
+      if (idx !== -1 && parts[idx + 1]) return parts[idx + 1];
+    } catch {
+      // Not a valid URL — fall through.
+    }
+    // Bare playlist ID.
+    if (/^[a-zA-Z0-9]{10,}$/.test(trimmed)) return trimmed;
+    return null;
+  }
+
   async function playSearchResult(index: number) {
     if (!deviceId) return;
     await fetch("/api/spotify/play", {
@@ -260,6 +368,61 @@ export function LibraryClient() {
       body: JSON.stringify({
         deviceId,
         uris: searchResults.map((t) => t.uri),
+        offset: index,
+      }),
+    });
+  }
+
+  async function playAlbum(album: SearchAlbum) {
+    if (!deviceId) return;
+    setPlayingAlbumId(album.id);
+    try {
+      const res = await fetch(`/api/spotify/albums/${album.id}/tracks`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Failed to load album");
+      const uris: string[] = data.tracks.map((t: Track) => t.uri);
+      if (uris.length === 0) return;
+      await fetch("/api/spotify/play", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ deviceId, uris, offset: 0 }),
+      });
+    } catch (err) {
+      setSearchError(
+        err instanceof Error ? err.message : "Failed to play album",
+      );
+    } finally {
+      setPlayingAlbumId(null);
+    }
+  }
+
+  async function handleSelectAlbum(album: SearchAlbum) {
+    setSelectedAlbum(album);
+    setAlbumTracks([]);
+    setAlbumTracksError(null);
+    setAlbumTracksLoading(true);
+    try {
+      const res = await fetch(`/api/spotify/albums/${album.id}/tracks`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Failed to load album");
+      setAlbumTracks(data.tracks);
+    } catch (err) {
+      setAlbumTracksError(
+        err instanceof Error ? err.message : "Failed to load album",
+      );
+    } finally {
+      setAlbumTracksLoading(false);
+    }
+  }
+
+  async function playAlbumTrack(index: number) {
+    if (!deviceId) return;
+    await fetch("/api/spotify/play", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        deviceId,
+        uris: albumTracks.map((t) => t.uri),
         offset: index,
       }),
     });
@@ -291,6 +454,56 @@ export function LibraryClient() {
     }
   }
 
+  async function toggleLikeAlbumTrack(track: SearchTrack) {
+    setLikingTrackId(track.id);
+    try {
+      const res = await fetch("/api/spotify/like", {
+        method: track.saved ? "DELETE" : "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ trackId: track.id }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error ?? "Failed to update Liked Songs");
+      }
+      setAlbumTracks((prev) =>
+        prev.map((t) =>
+          t.id === track.id ? { ...t, saved: !track.saved } : t,
+        ),
+      );
+    } catch (err) {
+      setAlbumTracksError(
+        err instanceof Error ? err.message : "Failed to update Liked Songs",
+      );
+    } finally {
+      setLikingTrackId(null);
+    }
+  }
+
+  async function unlikeTrack(track: Track) {
+    setLikingTrackId(track.id);
+    try {
+      const res = await fetch("/api/spotify/like", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ trackId: track.id }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error ?? "Failed to remove from Liked Songs");
+      }
+      setTracks((prev) => prev.filter((t) => t.id !== track.id));
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Failed to remove from Liked Songs",
+      );
+    } finally {
+      setLikingTrackId(null);
+    }
+  }
+
   async function handleSeek(e: React.ChangeEvent<HTMLInputElement>) {
     setPosition(Number(e.target.value));
   }
@@ -310,6 +523,7 @@ export function LibraryClient() {
     tracks.find((t) => t.uri === currentUri) ??
     mixTracks.find((t) => t.uri === currentUri) ??
     searchResults.find((t) => t.uri === currentUri) ??
+    albumTracks.find((t) => t.uri === currentUri) ??
     null;
   const currentTrack =
     currentUri && (matchedTrack || currentTrackName)
@@ -398,6 +612,13 @@ export function LibraryClient() {
                         className="rounded-md border px-3 py-1 text-xs font-medium disabled:opacity-50"
                       >
                         {isCurrent && !isPaused ? "Pause" : "Play"}
+                      </button>
+                      <button
+                        onClick={() => unlikeTrack(track)}
+                        disabled={likingTrackId === track.id}
+                        className="rounded-md border px-3 py-1 text-xs font-medium text-red-600 disabled:opacity-50"
+                      >
+                        Dislike
                       </button>
                     </div>
                   </li>
@@ -503,14 +724,15 @@ export function LibraryClient() {
           </>
         )}
 
-        {view === "search" && (
+        {view === "search" && !selectedAlbum && (
           <>
             <input
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder="Search songs…"
-              className="w-full rounded-md border px-3 py-2 text-sm"
+              className="w-full rounded-md border px-3 py-2 text-base"
+              style={{ fontSize: 16 }}
               autoFocus
             />
 
@@ -523,9 +745,53 @@ export function LibraryClient() {
             {!searchLoading &&
               !searchError &&
               searchQuery.trim() &&
-              searchResults.length === 0 && (
+              searchResults.length === 0 &&
+              searchAlbums.length === 0 && (
                 <p className="text-sm text-gray-500">No results found.</p>
               )}
+
+            {searchAlbums.length > 0 && (
+              <div className="space-y-2">
+                <h2 className="text-sm font-semibold text-gray-500">Albums</h2>
+                <ul className="divide-y rounded-lg border">
+                  {searchAlbums.map((album) => (
+                    <li
+                      key={album.id}
+                      className="flex items-center justify-between gap-4 px-4 py-3"
+                    >
+                      <button
+                        onClick={() => handleSelectAlbum(album)}
+                        className="flex min-w-0 flex-1 items-center gap-3 text-left"
+                      >
+                        {album.imageUrl && (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img
+                            src={album.imageUrl}
+                            alt=""
+                            className="h-10 w-10 shrink-0 rounded"
+                          />
+                        )}
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-medium">
+                            {album.name}
+                          </p>
+                          <p className="truncate text-xs text-gray-500">
+                            {album.artist} · {album.trackCount} tracks
+                          </p>
+                        </div>
+                      </button>
+                      <button
+                        onClick={() => playAlbum(album)}
+                        disabled={!sdkReady || playingAlbumId === album.id}
+                        className="shrink-0 rounded-md border px-3 py-1 text-xs font-medium disabled:opacity-50"
+                      >
+                        {playingAlbumId === album.id ? "Loading…" : "Play"}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
 
             <ul className="divide-y rounded-lg border pb-20">
               {searchResults.map((track, index) => {
@@ -576,10 +842,78 @@ export function LibraryClient() {
             </ul>
           </>
         )}
+
+        {view === "search" && selectedAlbum && (
+          <>
+            <button
+              onClick={() => setSelectedAlbum(null)}
+              className="text-sm font-medium text-gray-500 hover:text-black"
+            >
+              ← Back to search
+            </button>
+            <h2 className="text-lg font-medium">{selectedAlbum.name}</h2>
+            <p className="text-sm text-gray-500">{selectedAlbum.artist}</p>
+
+            {albumTracksLoading && (
+              <p className="text-sm text-gray-500">Loading tracks…</p>
+            )}
+            {albumTracksError && (
+              <p className="text-sm text-red-600">{albumTracksError}</p>
+            )}
+
+            <ul className="divide-y rounded-lg border pb-20">
+              {albumTracks.map((track, index) => {
+                const isCurrent = currentUri === track.uri;
+                return (
+                  <li
+                    key={track.id}
+                    className="flex items-center justify-between gap-4 px-4 py-3"
+                  >
+                    <div className="min-w-0">
+                      <p
+                        className={`truncate text-sm font-medium ${
+                          isCurrent ? "text-green-600" : ""
+                        }`}
+                      >
+                        {track.name}
+                      </p>
+                      <p className="truncate text-xs text-gray-500">
+                        {track.artist}
+                      </p>
+                    </div>
+                    <div className="flex shrink-0 items-center gap-3">
+                      <span className="text-xs text-gray-400">
+                        {formatDuration(track.durationMs)}
+                      </span>
+                      <button
+                        onClick={() => toggleLikeAlbumTrack(track)}
+                        disabled={likingTrackId === track.id}
+                        className="rounded-md border px-3 py-1 text-xs font-medium disabled:opacity-50"
+                      >
+                        {track.saved ? "Unlike" : "Like"}
+                      </button>
+                      <button
+                        onClick={() =>
+                          isCurrent
+                            ? playerRef.current?.togglePlay()
+                            : playAlbumTrack(index)
+                        }
+                        disabled={!sdkReady}
+                        className="rounded-md border px-3 py-1 text-xs font-medium disabled:opacity-50"
+                      >
+                        {isCurrent && !isPaused ? "Pause" : "Play"}
+                      </button>
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+          </>
+        )}
       </div>
 
       {currentTrack && (
-        <div className="fixed inset-x-0 bottom-0 border-t bg-white/95 backdrop-blur">
+        <div className="fixed inset-x-0 bottom-0 border-t bg-white/95 text-gray-900 backdrop-blur">
           <div className="mx-auto flex max-w-2xl flex-col gap-2 px-4 py-3">
             <div className="flex items-center gap-2">
               <span className="w-10 shrink-0 text-right text-xs text-gray-400">
@@ -617,7 +951,7 @@ export function LibraryClient() {
                   onClick={() => playerRef.current?.previousTrack()}
                   disabled={!sdkReady}
                   aria-label="Previous track"
-                  className="rounded-md border px-3 py-2 text-sm font-medium disabled:opacity-50"
+                  className="rounded-md border border-gray-300 px-3 py-2 text-sm font-medium text-gray-900 disabled:opacity-50"
                 >
                   ⏮
                 </button>
@@ -625,7 +959,7 @@ export function LibraryClient() {
                   onClick={() => playerRef.current?.togglePlay()}
                   disabled={!sdkReady}
                   aria-label={isPaused ? "Play" : "Pause"}
-                  className="rounded-md border px-3 py-2 text-sm font-medium disabled:opacity-50"
+                  className="rounded-md border border-gray-300 px-3 py-2 text-sm font-medium text-gray-900 disabled:opacity-50"
                 >
                   {isPaused ? "▶" : "⏸"}
                 </button>
@@ -633,7 +967,7 @@ export function LibraryClient() {
                   onClick={() => playerRef.current?.nextTrack()}
                   disabled={!sdkReady}
                   aria-label="Next track"
-                  className="rounded-md border px-3 py-2 text-sm font-medium disabled:opacity-50"
+                  className="rounded-md border border-gray-300 px-3 py-2 text-sm font-medium text-gray-900 disabled:opacity-50"
                 >
                   ⏭
                 </button>

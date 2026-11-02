@@ -38,8 +38,11 @@ export async function POST(request: Request) {
   }
 
   try {
+    // Spotify's older /me/tracks endpoint is deprecated and now returns
+    // 403 for apps in Development Mode — use the newer /me/library
+    // endpoint instead, which accepts URIs (not just IDs).
     const res = await spotifyFetch(
-      `${SPOTIFY_API_BASE}/me/tracks?ids=${parsed.data.trackId}`,
+      `${SPOTIFY_API_BASE}/me/library?uris=${encodeURIComponent(`spotify:track:${parsed.data.trackId}`)}`,
       {
         method: "PUT",
         headers: { Authorization: `Bearer ${accessToken}` },
@@ -95,7 +98,7 @@ export async function DELETE(request: Request) {
 
   try {
     const res = await spotifyFetch(
-      `${SPOTIFY_API_BASE}/me/tracks?ids=${parsed.data.trackId}`,
+      `${SPOTIFY_API_BASE}/me/library?uris=${encodeURIComponent(`spotify:track:${parsed.data.trackId}`)}`,
       {
         method: "DELETE",
         headers: { Authorization: `Bearer ${accessToken}` },

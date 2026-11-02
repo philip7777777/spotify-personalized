@@ -17,6 +17,15 @@ type SpotifySearchTrack = {
   album: { name: string };
 };
 
+type SpotifySearchAlbum = {
+  id: string;
+  uri: string;
+  name: string;
+  artists: { name: string }[];
+  total_tracks: number;
+  images: { url: string }[];
+};
+
 /**
  * Searches Spotify's catalog for tracks matching the query, and reports
  * whether each result is already saved in the user's Liked Songs.
@@ -43,7 +52,7 @@ export async function GET(request: Request) {
 
   try {
     const searchParamsOut = new URLSearchParams({
-      type: "track",
+      type: "track,album",
       limit: "10",
       q,
     });
@@ -61,15 +70,22 @@ export async function GET(request: Request) {
       );
     }
 
-    const data: { tracks: { items: SpotifySearchTrack[] } } = await res.json();
+    const data: {
+      tracks: { items: SpotifySearchTrack[] };
+      albums: { items: SpotifySearchAlbum[] };
+    } = await res.json();
     const items = data.tracks.items;
+    const albumItems = data.albums.items;
 
     // Check which of these results are already in the user's Liked Songs.
+    // (Spotify's older /me/tracks/contains endpoint is deprecated and now
+    // returns 403 for apps in Development Mode — use /me/library/contains
+    // instead, which accepts URIs.)
     let savedFlags: boolean[] = items.map(() => false);
     if (items.length > 0) {
-      const ids = items.map((t) => t.id).join(",");
+      const uris = items.map((t) => t.uri).join(",");
       const containsRes = await spotifyFetch(
-        `${SPOTIFY_API_BASE}/me/tracks/contains?ids=${ids}`,
+        `${SPOTIFY_API_BASE}/me/library/contains?uris=${encodeURIComponent(uris)}`,
         { headers: { Authorization: `Bearer ${accessToken}` } },
       );
       if (containsRes.ok) {
@@ -87,7 +103,15 @@ export async function GET(request: Request) {
       saved: savedFlags[i] ?? false,
     }));
 
-    return NextResponse.json({ tracks });
+    const albums = albumItems.map((a) => ({
+      id: a.id,
+      name: a.name,
+      artist: a.artists.map((ar) => ar.name).join(", "),
+      trackCount: a.total_tracks,
+      imageUrl: a.images[0]?.url ?? null,
+    }));
+
+    return NextResponse.json({ tracks, albums });
   } catch (err) {
     if (err instanceof SpotifyRateLimitError) {
       return NextResponse.json(
